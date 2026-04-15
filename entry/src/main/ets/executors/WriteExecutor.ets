@@ -1,163 +1,829 @@
 /**
- * 写执行体 - 接口定义
- * 负责：组员D（写执行体模块）
- * 功能：解析大模型返回的JSON，执行对应操作
- * 
- * 【核心工作流】
- * 1. 主页面调用 parseAction() 解析大模型返回
- * 2. 根据 action 类型决定如何处理
- * 3. 对于需要确认的操作（如schedule），返回给主页面显示弹窗
+ * 写执行体
+ * 负责：解析大模型返回的JSON，并把不同Action整理成主页面可执行的数据。
+ *
+ * 设计约束：
+ * 1. 主页面会直接读取 actionResult.action / reply / data。
+ * 2. schedule 的 data 必须保持为可展示、可保存的字符串，避免弹窗出现 [object Object]。
+ * 3. 扩展信息放在 scheduleDetail / studyRecommendation / psychState 中。
  */
 
-// 动作结果类型
-interface ActionResult {
+export interface ScheduleDetail {
+  rawContent: string
+  event: string
+  extractedTime: string | null
+  extractedLocation: string | null
+  remindTime: string | null
+  confidence: number
+  displayContent: string
+}
+
+export interface StudyRecommendation {
+  topic: string
+  difficulty: string
+  duration: string
+  resources: string[]
+  plan: string[]
+}
+
+export interface PsychState {
+  level: 'low' | 'medium' | 'high'
+  keywords: string[]
+  suggestion: string
+}
+
+export interface ActionResult {
   action: 'chat' | 'schedule' | 'study' | 'psych' | 'unknown'
   reply: string
-  data?: any
+  data?: string
+  rawData?: string
+  scheduleDetail?: ScheduleDetail
+  studyRecommendation?: StudyRecommendation
+  psychState?: PsychState
+  valid: boolean
+  errorMessage?: string
 }
 
 export class WriteExecutor {
-  
+  private readonly MAX_REPLY_LENGTH: number = 1000
+
   /**
-   * 解析大模型返回的JSON，提取动作信息
-   * 
-   * 【调用关系】
-   * - 由主页面 (Index.ets) 在收到大模型响应后调用
-   * - 调用前需要先经过 SecurityChecker 安全检查
-   * 
-   * @param llmResponse 大模型返回的JSON字符串
-   * @returns ActionResult 动作结果对象
+   * 解析大模型返回的JSON，提取动作信息。
+   *
+   * 支持以下返回形式：
+   * - {"action":"chat","reply":"..."}
+   * - ```json ... ```
+   * - 大模型额外输出说明文字时，从文本中提取第一段合法JSON。
    */
   parseAction(llmResponse: string): ActionResult {
     console.info('WriteExecutor: 解析动作')
-    
+
+    const responseText = this.normalizeString(llmResponse)
+    if (responseText.length === 0) {
+      return this.createChatFallback('抱歉，我没有收到有效回复。', '空响应')
+    }
+
     try {
-      // 1. 尝试解析JSON
-      const parsed = this.extractJSON(llmResponse)
-      
-      // 2. 验证并返回结果
-      if (parsed && parsed.action) {
-        return {
-          action: this.validateAction(parsed.action),
-          reply: parsed.reply || '收到',
-          data: parsed.data
+      const parsed = this.extractJSON(responseText)
+      const action = this.validateAction(this.normalizeString(parsed.action))
+      const reply = this.normalizeReply(parsed.reply, action)
+      const rawData = this.normalizeData(parsed.data, parsed)
+
+      switch (action) {
+        case 'chat': {
+          const result: ActionResult = {
+            action: 'chat',
+            reply: reply,
+            rawData: rawData,
+            valid: true
+          }
+          if (rawData.length > 0) {
+            result.data = rawData
+          }
+          return result
+        }
+
+        case 'schedule': {
+          const scheduleContent = rawData.length > 0 ? rawData : this.extractScheduleContentFromReply(reply)
+          const scheduleDetail = this.parseScheduleDetail(scheduleContent.length > 0 ? scheduleContent : '新日程安排')
+          return {
+            action: 'schedule',
+            reply: reply,
+            data: scheduleDetail.displayContent,
+            rawData: scheduleDetail.rawContent,
+            scheduleDetail: scheduleDetail,
+            valid: true
+          }
+        }
+
+        case 'study': {
+          const topic = rawData.length > 0 ? rawData : this.extractStudyTopic(reply)
+          const recommendation = this.getStudyRecommendation(topic.length > 0 ? topic : '当前学习内容')
+          return {
+            action: 'study',
+            reply: reply,
+            data: recommendation.topic,
+            rawData: rawData,
+            studyRecommendation: recommendation,
+            valid: true
+          }
+        }
+
+        case 'psych': {
+          const psychState = this.analyzePsychState(`${reply} ${rawData}`)
+          const result: ActionResult = {
+            action: 'psych',
+            reply: reply,
+            rawData: rawData,
+            psychState: psychState,
+            valid: true
+          }
+          if (rawData.length > 0) {
+            result.data = rawData
+          }
+          return result
+        }
+
+        default: {
+          const result: ActionResult = {
+            action: 'unknown',
+            reply: reply.length > 0 ? reply : '收到，但我暂时不支持这个操作。',
+            rawData: rawData,
+            valid: false,
+            errorMessage: `未知action: ${this.normalizeString(parsed.action)}`
+          }
+          if (rawData.length > 0) {
+            result.data = rawData
+          }
+          return result
         }
       }
-      
-      // 3. 解析失败，降级为普通聊天
-      return {
-        action: 'chat',
-        reply: llmResponse.substring(0, 200) // 截取前200字
-      }
-      
     } catch (error) {
-      console.error('WriteExecutor: 解析失败', JSON.stringify(error))
-      return {
-        action: 'chat',
-        reply: '抱歉，我没理解你的意思，能再说一遍吗？'
-      }
+      console.error(`WriteExecutor: 解析失败 ${JSON.stringify(error)}`)
+      return this.createChatFallback('抱歉，我没理解你的意思，能再说一遍吗？', 'JSON解析失败')
     }
   }
 
   /**
-   * 从字符串中提取JSON
-   * 处理大模型可能返回的Markdown代码块等情况
-   */
-  private extractJSON(text: string): any {
-    // 尝试直接解析
-    try {
-      return JSON.parse(text)
-    } catch (e) {
-      // 尝试提取代码块中的JSON
-      const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
-      if (codeBlockMatch) {
-        return JSON.parse(codeBlockMatch[1])
-      }
-      
-      // 尝试提取花括号中的内容
-      const braceMatch = text.match(/\{[\s\S]*\}/)
-      if (braceMatch) {
-        return JSON.parse(braceMatch[0])
-      }
-      
-      throw new Error('无法提取JSON')
-    }
-  }
-
-  /**
-   * 验证action类型
-   */
-  private validateAction(action: string): 'chat' | 'schedule' | 'study' | 'psych' | 'unknown' {
-    const validActions = ['chat', 'schedule', 'study', 'psych']
-    return validActions.includes(action) ? action as any : 'unknown'
-  }
-
-  /**
-   * 【可选】执行具体动作（如果需要写执行体内部处理）
-   * 目前由主页面统一处理，此方法预留
+   * 执行动作的轻量校验入口。
+   * 具体弹窗、保存数据库等动作仍由主页面统一处理。
    */
   executeAction(actionResult: ActionResult): boolean {
+    if (!actionResult || !actionResult.valid) {
+      return false
+    }
+
     switch (actionResult.action) {
       case 'chat':
-        // 普通聊天，无需特殊处理
-        return true
-        
+        return actionResult.reply.length > 0
+
       case 'schedule':
-        // 日程安排 - 需要用户确认，由主页面处理
-        // TODO: 组员D可以实现自动日程解析等功能
-        return true
-        
+        return !!actionResult.data && actionResult.data.length > 0
+
       case 'study':
-        // 学习推荐 - 可以对接学习资源API
-        // TODO: 组员D可以实现学习资源检索
-        return true
-        
+        return !!actionResult.studyRecommendation || !!actionResult.data
+
       case 'psych':
-        // 心理咨询 - 可以记录心理状态
-        // TODO: 组员D可以实现心理日志记录
-        return true
-        
+        return actionResult.reply.length > 0
+
       default:
         return false
     }
   }
 
   /**
-   * 【扩展接口】解析日程详情
-   * 从日程内容中提取时间、地点等信息
+   * 从日程内容中提取时间、地点、事件。
+   *
+   * 示例：
+   * 输入：明天下午3点在会议室开会
+   * 输出：时间=yyyy-MM-dd 15:00，地点=会议室，事件=开会
    */
-  parseScheduleDetail(scheduleContent: string): object {
-    // TODO: 组员D可以实现更复杂的日程解析
-    // 例如：提取"明天下午3点开会"中的时间信息
-    
+  parseScheduleDetail(scheduleContent: string): ScheduleDetail {
+    const rawContent = this.normalizeString(scheduleContent)
+    const content = rawContent.length > 0 ? rawContent : '新日程安排'
+    const datePart = this.extractDate(content)
+    const timePart = this.extractTime(content)
+    const location = this.extractLocation(content)
+    const event = this.extractEvent(content, location)
+
+    let extractedTime: string | null = null
+    if (datePart || timePart) {
+      const target = datePart ? datePart : this.startOfToday()
+      if (timePart) {
+        target.setHours(timePart[0], timePart[1], 0, 0)
+      } else {
+        target.setHours(9, 0, 0, 0)
+      }
+      extractedTime = this.formatDateTime(target)
+    }
+
+    const displayParts: string[] = [event.length > 0 ? event : content]
+    if (extractedTime) {
+      displayParts.push(`时间：${extractedTime}`)
+    }
+    if (location) {
+      displayParts.push(`地点：${location}`)
+    }
+
+    const confidence = this.calculateScheduleConfidence(event, content, extractedTime, location)
+
     return {
-      rawContent: scheduleContent,
-      extractedTime: null,
-      extractedLocation: null,
-      // ...
+      rawContent: content,
+      event: event.length > 0 ? event : content,
+      extractedTime: extractedTime,
+      extractedLocation: location,
+      remindTime: extractedTime,
+      confidence: confidence,
+      displayContent: displayParts.join('；')
     }
   }
 
   /**
-   * 【扩展接口】获取学习推荐
-   * 可以对接外部学习资源API
+   * 根据学习主题生成离线推荐。
+   * 不依赖外部API，适合课堂演示和Mock模式。
    */
-  getStudyRecommendation(topic: string): object {
-    // TODO: 组员D可以实现学习推荐逻辑
-    
+  getStudyRecommendation(topic: string): StudyRecommendation {
+    const normalizedTopic = this.normalizeStudyTopic(topic)
+    const lowerTopic = normalizedTopic.toLowerCase()
+
+    if (lowerTopic.includes('python')) {
+      return {
+        topic: 'Python',
+        difficulty: '初级',
+        duration: '2周',
+        resources: ['Python官方教程', '廖雪峰Python教程', '基础语法练习题'],
+        plan: ['第1-3天：变量、条件、循环', '第4-7天：函数、列表、字典', '第2周：文件处理和小项目']
+      }
+    }
+
+    if (normalizedTopic.includes('数据结构') || normalizedTopic.includes('算法')) {
+      return {
+        topic: '数据结构与算法',
+        difficulty: '中级',
+        duration: '3周',
+        resources: ['数组与链表专题', '栈队列树图专题', 'LeetCode基础题单'],
+        plan: ['第1周：线性结构', '第2周：树和图', '第3周：排序、搜索和综合练习']
+      }
+    }
+
+    if (normalizedTopic.includes('鸿蒙') || lowerTopic.includes('arkts') || lowerTopic.includes('harmony')) {
+      return {
+        topic: 'HarmonyOS ArkTS',
+        difficulty: '初级',
+        duration: '2周',
+        resources: ['ArkTS基础语法', '声明式UI组件', '应用状态管理示例'],
+        plan: ['第1周：语法和常用组件', '第2周：页面跳转、网络请求和数据存储']
+      }
+    }
+
+    if (normalizedTopic.includes('英语')) {
+      return {
+        topic: '英语',
+        difficulty: '按当前水平调整',
+        duration: '4周',
+        resources: ['高频词汇表', '听力精听材料', '口语跟读练习'],
+        plan: ['每天20分钟单词', '每天15分钟听力', '每周完成2次口语复述']
+      }
+    }
+
     return {
-      topic: topic,
-      recommendations: [],
-      // ...
+      topic: normalizedTopic,
+      difficulty: '初级',
+      duration: '2周',
+      resources: ['入门教程', '基础练习', '阶段性复盘清单'],
+      plan: ['先梳理核心概念', '再完成小练习', '最后做一次总结复盘']
     }
   }
 
   /**
-   * 【扩展接口】记录心理状态
+   * 记录心理状态。
+   * 当前项目没有心理日志表，这里先做分析和日志输出，后续可由数据库模块持久化。
    */
   recordPsychState(userInput: string, aiReply: string): boolean {
-    // TODO: 组员D可以实现心理状态跟踪
-    
+    const state = this.analyzePsychState(`${userInput} ${aiReply}`)
+    console.info(`WriteExecutor: 心理状态记录 level=${state.level}, keywords=${state.keywords.join(',')}`)
     return true
+  }
+
+  private createChatFallback(reply: string, reason: string): ActionResult {
+    return {
+      action: 'chat',
+      reply: reply,
+      valid: false,
+      errorMessage: reason
+    }
+  }
+
+  private extractJSON(text: string): any {
+    try {
+      return JSON.parse(text)
+    } catch (e) {
+      const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
+      if (codeBlockMatch && codeBlockMatch[1]) {
+        return JSON.parse(codeBlockMatch[1].trim())
+      }
+
+      const jsonText = this.findFirstJSONObject(text)
+      return JSON.parse(jsonText)
+    }
+  }
+
+  private findFirstJSONObject(text: string): string {
+    let start = -1
+    let depth = 0
+    let inString = false
+    let escaped = false
+
+    for (let i = 0; i < text.length; i++) {
+      const ch = text.charAt(i)
+
+      if (start < 0) {
+        if (ch === '{') {
+          start = i
+          depth = 1
+        }
+        continue
+      }
+
+      if (inString) {
+        if (escaped) {
+          escaped = false
+        } else if (ch === '\\') {
+          escaped = true
+        } else if (ch === '"') {
+          inString = false
+        }
+        continue
+      }
+
+      if (ch === '"') {
+        inString = true
+      } else if (ch === '{') {
+        depth++
+      } else if (ch === '}') {
+        depth--
+        if (depth === 0) {
+          return text.substring(start, i + 1)
+        }
+      }
+    }
+
+    throw new Error('无法提取JSON')
+  }
+
+  private validateAction(action: string): 'chat' | 'schedule' | 'study' | 'psych' | 'unknown' {
+    const normalized = action.trim().toLowerCase()
+
+    if (normalized === 'chat' || normalized === 'talk' || normalized === 'conversation') {
+      return 'chat'
+    }
+    if (normalized === 'schedule' || normalized === 'calendar' || normalized === 'reminder' || normalized === 'todo') {
+      return 'schedule'
+    }
+    if (normalized === 'study' || normalized === 'learn' || normalized === 'course') {
+      return 'study'
+    }
+    if (normalized === 'psych' || normalized === 'mental' || normalized === 'mood' || normalized === 'emotion') {
+      return 'psych'
+    }
+
+    return 'unknown'
+  }
+
+  private normalizeReply(reply: any, action: string): string {
+    const text = this.normalizeString(reply)
+    if (text.length > 0) {
+      return this.truncate(text, this.MAX_REPLY_LENGTH)
+    }
+
+    switch (action) {
+      case 'schedule':
+        return '好的，我来帮你安排这个日程。'
+      case 'study':
+        return '我为你整理了一份学习建议。'
+      case 'psych':
+        return '我在，你可以慢慢说。'
+      case 'unknown':
+        return '收到，但我暂时不支持这个操作。'
+      default:
+        return '收到。'
+    }
+  }
+
+  private normalizeData(data: any, parsed?: any): string {
+    if (data === undefined || data === null) {
+      if (parsed) {
+        const candidates = ['content', 'title', 'event', 'topic', 'text']
+        for (const key of candidates) {
+          const value = parsed[key]
+          const normalized = this.normalizeString(value)
+          if (normalized.length > 0) {
+            return normalized
+          }
+        }
+      }
+      return ''
+    }
+
+    if (typeof data === 'string') {
+      return data.trim()
+    }
+
+    if (typeof data === 'number' || typeof data === 'boolean') {
+      return `${data}`
+    }
+
+    if (Array.isArray(data)) {
+      const parts = data.map((item: any) => this.normalizeData(item)).filter((item: string) => item.length > 0)
+      return parts.join('；')
+    }
+
+    const event = this.normalizeString(data.event || data.title || data.content || data.name || data.topic)
+    const time = this.normalizeString(data.time || data.remindTime || data.date || data.datetime)
+    const location = this.normalizeString(data.location || data.place)
+    const parts: string[] = []
+
+    if (time.length > 0) {
+      parts.push(time)
+    }
+    if (location.length > 0) {
+      parts.push(`在${location}`)
+    }
+    if (event.length > 0) {
+      parts.push(event)
+    }
+
+    if (parts.length > 0) {
+      return parts.join(' ')
+    }
+
+    try {
+      return JSON.stringify(data)
+    } catch (e) {
+      return ''
+    }
+  }
+
+  private normalizeString(value: any): string {
+    if (value === undefined || value === null) {
+      return ''
+    }
+    if (typeof value === 'string') {
+      return value.trim()
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return `${value}`
+    }
+    try {
+      return JSON.stringify(value)
+    } catch (e) {
+      return ''
+    }
+  }
+
+  private truncate(text: string, maxLength: number): string {
+    if (text.length <= maxLength) {
+      return text
+    }
+    return `${text.substring(0, maxLength)}...`
+  }
+
+  private extractScheduleContentFromReply(reply: string): string {
+    const match = reply.match(/(?:安排|添加|创建|提醒)(?:日程|提醒|会议)?[：:]?\s*(.+)$/)
+    return match && match[1] ? match[1].trim() : ''
+  }
+
+  private extractStudyTopic(text: string): string {
+    const topicPatterns = [
+      /(?:学习|学|复习|推荐)(.+?)(?:课程|资料|内容|$)/,
+      /关于(.+?)(?:的学习|的资料|$)/
+    ]
+
+    for (const pattern of topicPatterns) {
+      const match = text.match(pattern)
+      if (match && match[1]) {
+        return this.normalizeStudyTopic(match[1])
+      }
+    }
+
+    return ''
+  }
+
+  private normalizeStudyTopic(topic: string): string {
+    const text = this.normalizeString(topic)
+      .replace(/我想/g, '')
+      .replace(/我想要/g, '')
+      .replace(/帮我/g, '')
+      .replace(/推荐/g, '')
+      .replace(/学习/g, '')
+      .replace(/课程/g, '')
+      .replace(/[，。！？,!?]/g, '')
+      .trim()
+
+    return text.length > 0 ? text : '当前学习内容'
+  }
+
+  private startOfToday(): Date {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  }
+
+  private extractDate(content: string): Date | null {
+    const now = this.startOfToday()
+
+    const fullDateMatch = content.match(/(\d{4})[年\/.-](\d{1,2})[月\/.-](\d{1,2})[日号]?/)
+    if (fullDateMatch) {
+      return new Date(Number(fullDateMatch[1]), Number(fullDateMatch[2]) - 1, Number(fullDateMatch[3]))
+    }
+
+    const monthDateMatch = content.match(/(\d{1,2})月(\d{1,2})[日号]?/)
+    if (monthDateMatch) {
+      const month = Number(monthDateMatch[1]) - 1
+      const day = Number(monthDateMatch[2])
+      let date = new Date(now.getFullYear(), month, day)
+      if (date.getTime() < now.getTime()) {
+        date = new Date(now.getFullYear() + 1, month, day)
+      }
+      return date
+    }
+
+    if (content.includes('大后天')) {
+      return this.addDays(now, 3)
+    }
+    if (content.includes('后天')) {
+      return this.addDays(now, 2)
+    }
+    if (content.includes('明天') || content.includes('明日')) {
+      return this.addDays(now, 1)
+    }
+    if (content.includes('今天') || content.includes('今日') || content.includes('今晚')) {
+      return now
+    }
+
+    const nextWeekMatch = content.match(/(?:下周|下星期|下礼拜)([一二三四五六日天1-7])/)
+    if (nextWeekMatch && nextWeekMatch[1]) {
+      return this.getWeekdayDate(this.weekdayToNumber(nextWeekMatch[1]), true)
+    }
+
+    const weekMatch = content.match(/(?:周|星期|礼拜)([一二三四五六日天1-7])/)
+    if (weekMatch && weekMatch[1]) {
+      return this.getWeekdayDate(this.weekdayToNumber(weekMatch[1]), false)
+    }
+
+    return null
+  }
+
+  private extractTime(content: string): number[] | null {
+    const normalized = content.replace(/：/g, ':')
+    const colonMatch = normalized.match(/(\d{1,2})\s*:\s*(\d{1,2})/)
+    if (colonMatch) {
+      const hour = Number(colonMatch[1])
+      const minute = Number(colonMatch[2])
+      if (this.isValidHourMinute(hour, minute)) {
+        return [hour, minute]
+      }
+    }
+
+    const clockMatch = content.match(/(凌晨|早上|上午|中午|下午|晚上|今晚)?\s*([0-9]{1,2}|[零〇一二两三四五六七八九十]{1,3})\s*[点时](半|一刻|三刻|[0-9]{1,2}\s*分?|[零〇一二两三四五六七八九十]{1,3}\s*分?)?/)
+    if (!clockMatch) {
+      return null
+    }
+
+    const period = clockMatch[1] || ''
+    let hour = this.parseNumberText(clockMatch[2])
+    let minute = 0
+
+    if (clockMatch[3]) {
+      const minuteText = clockMatch[3].replace(/分/g, '').trim()
+      if (minuteText === '半') {
+        minute = 30
+      } else if (minuteText === '一刻') {
+        minute = 15
+      } else if (minuteText === '三刻') {
+        minute = 45
+      } else {
+        minute = this.parseNumberText(minuteText)
+      }
+    }
+
+    hour = this.adjustHourByPeriod(hour, period)
+
+    if (this.isValidHourMinute(hour, minute)) {
+      return [hour, minute]
+    }
+
+    return null
+  }
+
+  private extractLocation(content: string): string | null {
+    const patterns = [
+      /在([^，。；\n]+?)(?:开会|会议|上课|学习|面试|见面|吃饭|汇报|讨论|提醒|$)/,
+      /去([^，。；\n]+?)(?:开会|会议|上课|学习|面试|见面|吃饭|汇报|讨论|$)/
+    ]
+
+    for (const pattern of patterns) {
+      const match = content.match(pattern)
+      if (match && match[1]) {
+        const location = match[1]
+          .replace(/(今天|明天|明日|后天|大后天|上午|下午|晚上|今晚|中午|凌晨|早上)/g, '')
+          .replace(/[0-9零〇一二两三四五六七八九十]+[点时].*$/g, '')
+          .trim()
+        if (location.length > 0) {
+          return location
+        }
+      }
+    }
+
+    return null
+  }
+
+  private extractEvent(content: string, location: string | null): string {
+    let event = content
+
+    event = event
+      .replace(/帮我/g, '')
+      .replace(/请/g, '')
+      .replace(/安排/g, '')
+      .replace(/添加/g, '')
+      .replace(/创建/g, '')
+      .replace(/预约/g, '')
+      .replace(/提醒我/g, '')
+      .replace(/提醒/g, '')
+      .replace(/我要/g, '')
+      .replace(/我想/g, '')
+      .replace(/(今天|明天|明日|后天|大后天|今晚|上午|下午|晚上|中午|凌晨|早上)/g, '')
+      .replace(/(?:下周|下星期|下礼拜|周|星期|礼拜)[一二三四五六日天1-7]/g, '')
+      .replace(/\d{4}[年\/.-]\d{1,2}[月\/.-]\d{1,2}[日号]?/g, '')
+      .replace(/\d{1,2}月\d{1,2}[日号]?/g, '')
+      .replace(/\d{1,2}\s*:\s*\d{1,2}/g, '')
+      .replace(/([0-9]{1,2}|[零〇一二两三四五六七八九十]{1,3})\s*[点时](半|一刻|三刻|[0-9]{1,2}\s*分?|[零〇一二两三四五六七八九十]{1,3}\s*分?)?/g, '')
+
+    if (location) {
+      event = event.replace(new RegExp(`在${this.escapeRegExp(location)}`, 'g'), '')
+      event = event.replace(new RegExp(`去${this.escapeRegExp(location)}`, 'g'), '')
+    }
+
+    event = event.replace(/[，。；,]/g, ' ').replace(/\s+/g, ' ').trim()
+    return event.length > 0 ? event : content
+  }
+
+  private calculateScheduleConfidence(event: string, rawContent: string, extractedTime: string | null, location: string | null): number {
+    let confidence = 0.35
+    if (event.length > 0 && event !== rawContent) {
+      confidence += 0.2
+    }
+    if (extractedTime) {
+      confidence += 0.3
+    }
+    if (location) {
+      confidence += 0.15
+    }
+    return Math.min(1, Math.round(confidence * 100) / 100)
+  }
+
+  private analyzePsychState(text: string): PsychState {
+    const normalized = this.normalizeString(text)
+    const highKeywords = ['崩溃', '绝望', '活不下去', '自杀', '自残']
+    const mediumKeywords = ['焦虑', '压力', '难过', '失眠', '痛苦', '害怕']
+    const lowKeywords = ['累', '烦', '低落', '郁闷', '不开心']
+
+    const matchedHigh = highKeywords.filter((keyword: string) => normalized.includes(keyword))
+    if (matchedHigh.length > 0) {
+      return {
+        level: 'high',
+        keywords: matchedHigh,
+        suggestion: '建议尽快联系可信任的人或专业心理援助渠道。'
+      }
+    }
+
+    const matchedMedium = mediumKeywords.filter((keyword: string) => normalized.includes(keyword))
+    if (matchedMedium.length > 0) {
+      return {
+        level: 'medium',
+        keywords: matchedMedium,
+        suggestion: '建议先做情绪记录，并安排短时间休息。'
+      }
+    }
+
+    const matchedLow = lowKeywords.filter((keyword: string) => normalized.includes(keyword))
+    return {
+      level: 'low',
+      keywords: matchedLow,
+      suggestion: '可以继续倾诉，也可以做一次简单复盘。'
+    }
+  }
+
+  private addDays(date: Date, days: number): Date {
+    const result = new Date(date.getTime())
+    result.setDate(result.getDate() + days)
+    return result
+  }
+
+  private getWeekdayDate(targetWeekday: number, nextWeek: boolean): Date {
+    const today = this.startOfToday()
+    const currentWeekday = today.getDay()
+    let offset = 0
+
+    if (nextWeek) {
+      offset = 7 - currentWeekday + targetWeekday
+      if (offset <= 0) {
+        offset += 7
+      }
+    } else {
+      offset = targetWeekday - currentWeekday
+      if (offset <= 0) {
+        offset += 7
+      }
+    }
+
+    return this.addDays(today, offset)
+  }
+
+  private weekdayToNumber(text: string): number {
+    switch (text) {
+      case '日':
+      case '天':
+      case '7':
+        return 0
+      case '一':
+      case '1':
+        return 1
+      case '二':
+      case '2':
+        return 2
+      case '三':
+      case '3':
+        return 3
+      case '四':
+      case '4':
+        return 4
+      case '五':
+      case '5':
+        return 5
+      case '六':
+      case '6':
+        return 6
+      default:
+        return 1
+    }
+  }
+
+  private parseNumberText(text: string): number {
+    const normalized = this.normalizeString(text)
+    const parsed = Number(normalized)
+    if (!Number.isNaN(parsed)) {
+      return parsed
+    }
+
+    if (normalized === '十') {
+      return 10
+    }
+
+    if (normalized.includes('十')) {
+      const parts = normalized.split('十')
+      const tens = parts[0].length === 0 ? 1 : this.chineseDigitToNumber(parts[0])
+      const ones = parts.length > 1 && parts[1].length > 0 ? this.chineseDigitToNumber(parts[1]) : 0
+      return tens * 10 + ones
+    }
+
+    return this.chineseDigitToNumber(normalized)
+  }
+
+  private chineseDigitToNumber(text: string): number {
+    switch (text) {
+      case '零':
+      case '〇':
+        return 0
+      case '一':
+        return 1
+      case '二':
+      case '两':
+        return 2
+      case '三':
+        return 3
+      case '四':
+        return 4
+      case '五':
+        return 5
+      case '六':
+        return 6
+      case '七':
+        return 7
+      case '八':
+        return 8
+      case '九':
+        return 9
+      default:
+        return 0
+    }
+  }
+
+  private adjustHourByPeriod(hour: number, period: string): number {
+    if ((period === '下午' || period === '晚上' || period === '今晚') && hour < 12) {
+      return hour + 12
+    }
+    if (period === '中午' && hour < 11) {
+      return hour + 12
+    }
+    if (period === '凌晨' && hour === 12) {
+      return 0
+    }
+    return hour
+  }
+
+  private isValidHourMinute(hour: number, minute: number): boolean {
+    return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59
+  }
+
+  private formatDateTime(date: Date): string {
+    return `${date.getFullYear()}-${this.pad2(date.getMonth() + 1)}-${this.pad2(date.getDate())} ${this.pad2(date.getHours())}:${this.pad2(date.getMinutes())}`
+  }
+
+  private pad2(value: number): string {
+    return value < 10 ? `0${value}` : `${value}`
+  }
+
+  private escapeRegExp(text: string): string {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   }
 }
