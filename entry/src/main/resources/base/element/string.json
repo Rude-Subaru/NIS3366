@@ -2,15 +2,15 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "AI秘书 - 智能助手"
+      "value": "AI 秘书 - 智能助手"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "AI秘书主入口"
+      "value": "AI 秘书主入口"
     },
     {
       "name": "EntryAbility_label",
-      "value": "AI秘书"
+      "value": "AI 秘书"
     }
   ]
 }

@@ -1,366 +1,617 @@
-/**
- * AI秘书 - 主聊天页面
- * 负责：组长（UI与主逻辑）
- * 功能：美观的聊天界面、消息管理、调用各模块
- */
-
+﻿import common from '@ohos.app.ability.common'
 import { LLMService } from '../utils/LLMService'
-import { DatabaseManager } from '../database/DatabaseManager'
+import { DatabaseManager, MessageRecord, ScheduleRecord } from '../database/DatabaseManager'
 import { ReadExecutor } from '../executors/ReadExecutor'
-import { WriteExecutor } from '../executors/WriteExecutor'
+import { WriteExecutor, ActionResult } from '../executors/WriteExecutor'
 import { SecurityChecker } from '../security/SecurityChecker'
 import { ActionDialog } from '../components/ActionDialog'
 
-// 消息数据模型
+/** 聊天气泡在页面层使用的轻量模型。 */
 class ChatMessage {
   id: number
   content: string
   isUser: boolean
   timestamp: string
-  avatar: string
 
   constructor(id: number, content: string, isUser: boolean, timestamp: string) {
     this.id = id
     this.content = content
     this.isUser = isUser
     this.timestamp = timestamp
-    this.avatar = isUser ? '' : 'app.media.ai_avatar'
   }
 }
 
+/**
+ * 主页面负责串联 UI、数据库、读执行体、大模型、写执行体和安全检查。
+ * 注意：这里不改写执行体和安全模块的内部逻辑，只消费它们暴露的结果。
+ */
 @Entry
 @Component
-struct ChatPage {
-  @State messageList: ChatMessage[] = []
-  @State inputText: string = ''
-  @State isLoading: boolean = false
-  @State showActionDialog: boolean = false
-  @State dialogTitle: string = ''
-  @State dialogContent: string = ''
-  @State pendingAction: object = {}
-  
-  private listScroller: ListScroller = new ListScroller()
-  private dbManager: DatabaseManager = new DatabaseManager()
+struct Index {
+  @State private messageList: ChatMessage[] = []
+  @State private scheduleList: ScheduleRecord[] = []
+  @State private messageCount: number = 0
+  @State private pendingScheduleCount: number = 0
+  @State private completedScheduleCount: number = 0
+  @State private inputText: string = ''
+  @State private isLoading: boolean = false
+  @State private isInitializing: boolean = true
+  @State private showActionDialog: boolean = false
+  @State private dialogTitle: string = ''
+  @State private dialogContent: string = ''
+  @State private pendingSchedule: ScheduleRecord | null = null
+  @State private lastSecurityHint: string = ''
 
-  aboutToAppear() {
-    // 初始化数据库
-    this.dbManager.initDB()
-    // 加载历史消息
-    this.loadHistoryMessages()
-    // 添加欢迎消息
+  private readonly listScroller: Scroller = new Scroller()
+  private readonly dbManager: DatabaseManager = new DatabaseManager()
+  private readonly llmService: LLMService = new LLMService()
+  private readonly securityChecker: SecurityChecker = new SecurityChecker()
+  private readonly writeExecutor: WriteExecutor = new WriteExecutor()
+
+  async aboutToAppear(): Promise<void> {
+    const abilityContext: common.UIAbilityContext = getContext(this) as common.UIAbilityContext
+    this.dbManager.setContext(abilityContext)
+
+    const initOk: boolean = await this.dbManager.initDB()
+    if (!initOk) {
+      this.isInitializing = false
+      await this.addTransientMessage('数据库初始化失败，请检查运行环境。', false)
+      return
+    }
+
+    await this.loadInitialData()
+    this.isInitializing = false
+
+    // 首次进入没有记录时，自动补一条欢迎语。
     if (this.messageList.length === 0) {
-      this.addMessage('你好！我是你的AI秘书，可以帮你管理日程、推荐学习、心理咨询。有什么可以帮你的吗？', false)
+      await this.addMessage(
+        '你好，我是你的 AI 秘书。我可以帮你记录日程、推荐学习内容，也可以陪你聊聊近况。',
+        false
+      )
     }
   }
 
-  // 加载历史消息
-  loadHistoryMessages() {
-    // TODO: 从数据库加载，目前先Mock几条
-    const mockHistory = this.dbManager.getRecentMessages(5)
-    this.messageList = mockHistory.map((msg: any, index: number) => {
-      return new ChatMessage(index, msg.content, msg.isUser, msg.timestamp)
+  async aboutToDisappear(): Promise<void> {
+    await this.dbManager.closeDB()
+  }
+
+  private async loadInitialData(): Promise<void> {
+    await this.loadHistoryMessages()
+    await this.loadSchedules()
+  }
+
+  private refreshOverviewStats(): void {
+    this.messageCount = this.messageList.length
+    this.pendingScheduleCount = this.scheduleList.filter((item: ScheduleRecord): boolean => !item.isDone).length
+    this.completedScheduleCount = this.scheduleList.filter((item: ScheduleRecord): boolean => item.isDone).length
+  }
+
+  private async loadHistoryMessages(): Promise<void> {
+    const history: MessageRecord[] = await this.dbManager.getRecentMessages(20)
+    this.messageList = history.map((msg: MessageRecord): ChatMessage => {
+      return new ChatMessage(msg.id, msg.content, msg.isUser, this.formatTime(msg.timestamp))
+    })
+    this.refreshOverviewStats()
+  }
+
+  private async loadSchedules(): Promise<void> {
+    const schedules: ScheduleRecord[] = await this.dbManager.getAllSchedules()
+    this.scheduleList = schedules.map((item: ScheduleRecord): ScheduleRecord => {
+      return {
+        id: item.id,
+        content: item.content,
+        createdTime: item.createdTime,
+        remindTime: item.remindTime,
+        isDone: item.isDone
+      }
+    })
+    this.refreshOverviewStats()
+  }
+
+  private formatTime(timestamp: string): string {
+    const date: Date = new Date(timestamp)
+    return date.toLocaleTimeString('zh-CN', {
+      hour: '2-digit',
+      minute: '2-digit'
     })
   }
 
-  // 添加消息到列表
-  addMessage(content: string, isUser: boolean) {
-    const timestamp = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-    const newMessage = new ChatMessage(this.messageList.length, content, isUser, timestamp)
-    this.messageList.push(newMessage)
-    
-    // 保存到数据库
-    this.dbManager.saveMessage(content, isUser)
-    
-    // 滚动到底部
-    setTimeout(() => {
+  private formatDateTime(timestamp?: string): string {
+    if (timestamp === undefined || timestamp.length === 0) {
+      return '未设置提醒时间'
+    }
+
+    const date: Date = new Date(timestamp)
+    return date.toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  }
+
+  /** 正常消息会持久化到数据库。 */
+  private async addMessage(content: string, isUser: boolean): Promise<void> {
+    const record: MessageRecord = await this.dbManager.saveMessage(content, isUser)
+    const newMessage: ChatMessage = new ChatMessage(record.id, record.content, record.isUser, this.formatTime(record.timestamp))
+    this.messageList = [...this.messageList, newMessage]
+    this.refreshOverviewStats()
+    this.scrollToBottom()
+  }
+
+  /** 临时提示只显示在界面上，不写数据库。 */
+  private async addTransientMessage(content: string, isUser: boolean): Promise<void> {
+    const message: ChatMessage = new ChatMessage(
+      this.messageList.length + 1,
+      content,
+      isUser,
+      this.formatTime(new Date().toISOString())
+    )
+    this.messageList = [...this.messageList, message]
+    this.refreshOverviewStats()
+    this.scrollToBottom()
+  }
+
+  private scrollToBottom(): void {
+    setTimeout((): void => {
       this.listScroller.scrollEdge(Edge.Bottom)
     }, 100)
   }
 
-  // 发送消息主流程
-  async sendMessage() {
-    if (this.inputText.trim() === '' || this.isLoading) return
+  async sendMessage(): Promise<void> {
+    const userInput: string = this.inputText.trim()
+    if (userInput.length === 0 || this.isLoading || this.isInitializing) {
+      return
+    }
 
-    const userInput = this.inputText.trim()
     this.inputText = ''
-    
-    // 1. 显示用户消息
-    this.addMessage(userInput, true)
+    await this.addMessage(userInput, true)
     this.isLoading = true
 
     try {
-      // 2. 读执行体：组装Prompt
-      const readExecutor = new ReadExecutor(this.dbManager)
-      const prompt = readExecutor.buildPrompt(userInput)
-      
-      // 3. 调用大模型
-      const llmService = new LLMService()
-      const llmResponse = await llmService.callLLM(prompt)
-      
-      // 4. 安全检查
-      const securityChecker = new SecurityChecker()
-      if (!securityChecker.isSafe(llmResponse)) {
-        this.addMessage('抱歉，检测到不安全的指令，已拦截。', false)
-        this.isLoading = false
+      const readExecutor: ReadExecutor = new ReadExecutor(this.dbManager)
+      const prompt: string = await readExecutor.buildPrompt(userInput)
+      const llmResponse: string = await this.llmService.callLLM(prompt)
+
+      const securityResult = this.securityChecker.checkContent(llmResponse)
+      if (!securityResult.safe) {
+        this.lastSecurityHint = securityResult.reason ?? '安全检查未通过'
+        await this.addMessage(`我拦截了一条不安全的模型输出：${this.lastSecurityHint}`, false)
         return
       }
 
-      // 5. 写执行体：解析并执行
-      const writeExecutor = new WriteExecutor()
-      const actionResult = writeExecutor.parseAction(llmResponse)
-      
-      await this.handleActionResult(actionResult, llmResponse)
-      
+      const actionResult: ActionResult = this.writeExecutor.parseAction(llmResponse)
+      await this.handleActionResult(actionResult)
     } catch (error) {
-      this.addMessage('抱歉，处理出错了，请稍后再试。', false)
-      console.error('Error:', JSON.stringify(error))
+      console.error('Index sendMessage error:', JSON.stringify(error))
+      await this.addMessage('处理消息时出错，请稍后重试。', false)
     } finally {
       this.isLoading = false
     }
   }
 
-  // 处理执行结果
-  async handleActionResult(actionResult: any, rawResponse: string) {
+  /**
+   * 消费写执行体的标准化结果。
+   * 这里不重新解析 JSON，只根据 actionResult 中的字段驱动 UI 和数据库。
+   */
+  private async handleActionResult(actionResult: ActionResult): Promise<void> {
+    if (!actionResult.valid && actionResult.action === 'chat') {
+      await this.addMessage(actionResult.reply, false)
+      return
+    }
+
     switch (actionResult.action) {
-      case 'chat':
-        // 普通聊天，直接回复
-        this.addMessage(actionResult.reply || '收到你的消息啦~', false)
-        break
-        
-      case 'schedule':
-        // 日程管理，弹窗确认
-        this.dialogTitle = '📅 添加日程确认'
-        this.dialogContent = `是否添加日程：${actionResult.data || '新日程'}？`
-        this.pendingAction = { type: 'schedule', data: actionResult.data }
+      case 'schedule': {
+        const schedule: ScheduleRecord = {
+          id: 0,
+          content: actionResult.data ?? actionResult.scheduleDetail?.displayContent ?? '新日程安排',
+          createdTime: new Date().toISOString(),
+          remindTime: actionResult.scheduleDetail?.remindTime ?? undefined,
+          isDone: false
+        }
+        this.pendingSchedule = schedule
+        this.dialogTitle = '添加日程'
+        this.dialogContent = `${actionResult.reply}\n\n${schedule.content}`
         this.showActionDialog = true
         break
-        
-      case 'study':
-        // 学习推荐，直接回复（可以Mock推荐内容）
-        const studyRecommendations = [
-          '📚 推荐你学习《数据结构与算法》，今晚8点开始',
-          '📖 根据你的进度，建议复习第三章内容',
-          '✏️ 为你找到一份相关练习题，要做一下吗？',
-          '🎯 本周学习目标：完成Python基础课程'
-        ]
-        const randomRec = studyRecommendations[Math.floor(Math.random() * studyRecommendations.length)]
-        this.addMessage(`${actionResult.reply}\n\n${randomRec}`, false)
+      }
+      case 'study': {
+        if (actionResult.studyRecommendation) {
+          const recommendation = actionResult.studyRecommendation
+          const content: string = `${actionResult.reply}\n\n主题：${recommendation.topic}\n难度：${recommendation.difficulty}\n周期：${recommendation.duration}\n资源：${recommendation.resources.join('；')}\n计划：${recommendation.plan.join('；')}`
+          await this.addMessage(content, false)
+        } else {
+          await this.addMessage(actionResult.reply, false)
+        }
         break
-        
-      case 'psych':
-        // 心理咨询，直接回复
-        this.addMessage(actionResult.reply || '我理解你的感受，想聊聊吗？', false)
+      }
+      case 'psych': {
+        await this.addMessage(actionResult.reply, false)
+        if (actionResult.psychState) {
+          await this.addMessage(`情绪评估：${actionResult.psychState.level}；建议：${actionResult.psychState.suggestion}`, false)
+        }
+        this.writeExecutor.recordPsychState(actionResult.rawData ?? actionResult.reply, actionResult.reply)
         break
-        
+      }
+      case 'unknown': {
+        const fallback = actionResult.errorMessage
+          ? `${actionResult.reply}\n\n说明：${actionResult.errorMessage}`
+          : actionResult.reply
+        await this.addMessage(fallback, false)
+        break
+      }
+      case 'chat':
       default:
-        // 未知动作，显示原始回复
-        this.addMessage(actionResult.reply || '收到，我会记着的~', false)
+        await this.addMessage(actionResult.reply, false)
+        break
     }
   }
 
-  // 弹窗确认回调
-  onDialogConfirm() {
-    if (this.pendingAction.type === 'schedule') {
-      // 保存日程到数据库
-      this.dbManager.saveSchedule(this.pendingAction.data)
-      this.addMessage(`✅ 已添加日程：${this.pendingAction.data}`, false)
+  private async onDialogConfirm(): Promise<void> {
+    if (this.pendingSchedule !== null) {
+      const savedSchedule: ScheduleRecord = await this.dbManager.saveSchedule(this.pendingSchedule.content, this.pendingSchedule.remindTime)
+      this.scheduleList = [savedSchedule, ...this.scheduleList]
+      this.refreshOverviewStats()
+      await this.addMessage(`已添加日程：${savedSchedule.content}`, false)
     }
+
     this.showActionDialog = false
-    this.pendingAction = {}
+    this.pendingSchedule = null
   }
 
-  // 弹窗取消回调
-  onDialogCancel() {
-    this.addMessage('❌ 已取消操作', false)
+  private async onDialogCancel(): Promise<void> {
     this.showActionDialog = false
-    this.pendingAction = {}
+    this.pendingSchedule = null
+    await this.addMessage('本次日程操作已取消。', false)
   }
 
-  build() {
+  private async markScheduleDone(scheduleId: number): Promise<void> {
+    const success: boolean = await this.dbManager.markScheduleDone(scheduleId)
+    if (!success) {
+      await this.addMessage('标记完成失败，请稍后重试。', false)
+      return
+    }
+
+    this.scheduleList = this.scheduleList.map((item: ScheduleRecord): ScheduleRecord => {
+      if (item.id === scheduleId) {
+        return {
+          id: item.id,
+          content: item.content,
+          createdTime: item.createdTime,
+          remindTime: item.remindTime,
+          isDone: true
+        }
+      }
+      return item
+    })
+    this.refreshOverviewStats()
+    await this.addMessage('已将该日程标记为完成。', false)
+  }
+
+  private handleDialogConfirm(): void {
+    this.onDialogConfirm()
+  }
+
+  private handleDialogCancel(): void {
+    this.onDialogCancel()
+  }
+
+  private handleMarkScheduleDone(scheduleId: number): void {
+    this.markScheduleDone(scheduleId)
+  }
+
+  @Builder
+  private HeaderBuilder(): void {
+    Column({ space: 4 }) {
+      Text('AI 秘书')
+        .fontSize(20)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#FFFFFF')
+
+      Text('聊天、日程和学习建议都在这里')
+        .fontSize(11)
+        .fontColor('rgba(255,255,255,0.85)')
+
+      if (this.lastSecurityHint.length > 0) {
+        Text(`最近一次拦截：${this.lastSecurityHint}`)
+          .fontSize(10)
+          .fontColor('rgba(255,255,255,0.75)')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+    }
+    .width('100%')
+    .padding({ top: 16, bottom: 16 })
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor('#2D6A4F')
+  }
+
+  @Builder
+  private OverviewBuilder(): void {
+    Row() {
+      Column({ space: 8 }) {
+        Text('聊天记录')
+          .fontSize(12)
+          .fontColor('#52606D')
+        Text(`${this.messageList.length}`)
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#1F2933')
+      }
+      .width('31%')
+      .padding(12)
+      .backgroundColor('#F4FBF6')
+      .borderRadius(14)
+      .alignItems(HorizontalAlign.Start)
+
+      Column({ space: 8 }) {
+        Text('待办日程')
+          .fontSize(12)
+          .fontColor('#52606D')
+        Text(`${this.scheduleList.filter((item: ScheduleRecord): boolean => !item.isDone).length}`)
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#1F2933')
+      }
+      .width('31%')
+      .padding(12)
+      .backgroundColor('#FFF7ED')
+      .borderRadius(14)
+      .alignItems(HorizontalAlign.Start)
+
+      Column({ space: 8 }) {
+        Text('已完成')
+          .fontSize(12)
+          .fontColor('#52606D')
+        Text(`${this.scheduleList.filter((item: ScheduleRecord): boolean => item.isDone).length}`)
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#1F2933')
+      }
+      .width('31%')
+      .padding(12)
+      .backgroundColor('#EEF2FF')
+      .borderRadius(14)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 12, bottom: 6 })
+    .justifyContent(FlexAlign.SpaceBetween)
+  }
+
+  @Builder
+  private SchedulePanelBuilder(): void {
+    Column({ space: 10 }) {
+      Row() {
+        Text('日程安排')
+          .fontSize(17)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#1F2933')
+
+        Blank()
+
+        Text(`${this.scheduleList.length} 条记录`)
+          .fontSize(12)
+          .fontColor('#7B8794')
+      }
+      .width('100%')
+
+      if (this.scheduleList.length === 0) {
+        Text('还没有保存的日程，试试发送“帮我安排明天下午3点开会”。')
+          .fontSize(13)
+          .fontColor('#7B8794')
+          .width('100%')
+      } else {
+        List() {
+          ForEach(this.scheduleList, (item: ScheduleRecord): void => {
+            ListItem() {
+              this.ScheduleItemBuilder(item)
+            }
+          }, (item: ScheduleRecord): string => `${item.id}-${item.isDone ? 'done' : 'todo'}-${item.content}`)
+        }
+        .width('100%')
+        .height(180)
+        .divider({ strokeWidth: 8, color: '#F8FAFC' })
+      }
+    }
+    .width('100%')
+    .padding(14)
+    .margin({ left: 12, right: 12, top: 6, bottom: 8 })
+    .backgroundColor('#FFFFFF')
+    .borderRadius(18)
+  }
+
+  @Builder
+  private ScheduleItemBuilder(schedule: ScheduleRecord): void {
+    Row() {
+      Column({ space: 6 }) {
+        Text(schedule.content)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(schedule.isDone ? '#7B8794' : '#1F2933')
+          .decoration({ type: schedule.isDone ? TextDecorationType.LineThrough : TextDecorationType.None })
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(this.formatDateTime(schedule.remindTime ?? schedule.createdTime))
+          .fontSize(11)
+          .fontColor('#7B8794')
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      if (!schedule.isDone) {
+        Button('完成')
+          .fontSize(12)
+          .height(34)
+          .backgroundColor('#2D6A4F')
+          .fontColor('#FFFFFF')
+          .borderRadius(10)
+          .onClick((): void => this.handleMarkScheduleDone(schedule.id))
+      } else {
+        Text('已完成')
+          .fontSize(12)
+          .fontColor('#2D6A4F')
+          .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+          .backgroundColor('#E8F5E9')
+          .borderRadius(10)
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor('#F8FAFC')
+    .borderRadius(14)
+  }
+
+  @Builder
+  private ChatPanelBuilder(): void {
     Column() {
-      // 顶部标题栏
-      this.HeaderBuilder()
-      
-      // 消息列表
+      Row() {
+        Text('聊天记录')
+          .fontSize(17)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#1F2933')
+
+        Blank()
+
+        if (this.isLoading) {
+          Row() {
+            LoadingProgress()
+              .width(14)
+              .height(14)
+              .color('#2D6A4F')
+
+            Text('AI 正在思考')
+              .fontSize(11)
+              .fontColor('#52606D')
+              .margin({ left: 6 })
+          }
+        }
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 14, bottom: 6 })
+
       List({ scroller: this.listScroller }) {
-        ForEach(this.messageList, (item: ChatMessage, index: number) => {
+        ForEach(this.messageList, (item: ChatMessage): void => {
           ListItem() {
             this.MessageItemBuilder(item)
           }
-        }, (item: ChatMessage) => item.id.toString())
+        }, (item: ChatMessage): string => `${item.id}-${item.timestamp}-${item.isUser ? 'user' : 'ai'}`)
       }
-      .width('100%')
       .layoutWeight(1)
+      .width('100%')
       .edgeEffect(EdgeEffect.Spring)
-      .padding({ top: 10, bottom: 10 })
-      .backgroundColor('#F5F5F5')
+      .backgroundColor('#EEF2F6')
+    }
+    .layoutWeight(1)
+    .width('100%')
+  }
 
-      // 加载指示器
-      if (this.isLoading) {
-        Row() {
-          LoadingProgress()
-            .width(20)
-            .height(20)
-            .color('#07C160')
-          Text('AI思考中...')
-            .fontSize(12)
-            .fontColor('#999')
-            .margin({ left: 8 })
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.Center)
-        .padding(8)
-        .backgroundColor('#F5F5F5')
+  @Builder
+  private MessageItemBuilder(message: ChatMessage): void {
+    Row() {
+      if (!message.isUser) {
+        this.AvatarBuilder('AI', '#3F5E7A')
       }
 
-      // 底部输入区
-      this.InputBuilder()
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor('#EDEDED')
+      Column() {
+        Text(message.content)
+          .fontSize(15)
+          .lineHeight(22)
+          .fontColor('#1F2933')
+          .padding(12)
+          .backgroundColor(message.isUser ? '#D8F3DC' : '#FFFFFF')
+          .borderRadius(12)
+          .constraintSize({ maxWidth: '78%' })
 
-    // 执行确认弹窗
-    ActionDialog({
-      isShow: this.showActionDialog,
-      title: this.dialogTitle,
-      content: this.dialogContent,
-      onConfirm: () => this.onDialogConfirm(),
-      onCancel: () => this.onDialogCancel()
-    })
-  }
+        Text(message.timestamp)
+          .fontSize(10)
+          .fontColor('#7B8794')
+          .margin({ top: 4 })
+      }
+      .alignItems(message.isUser ? HorizontalAlign.End : HorizontalAlign.Start)
+      .layoutWeight(1)
+      .margin(message.isUser ? { right: 12 } : { left: 12 })
 
-  // 顶部标题栏构建器
-  @Builder
-  HeaderBuilder() {
-    Row() {
-      Text('🤖 AI秘书')
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#FFFFFF')
-    }
-    .width('100%')
-    .height(56)
-    .justifyContent(FlexAlign.Center)
-    .backgroundColor('#07C160')
-    .shadow({ radius: 4, color: 'rgba(0,0,0,0.1)', offsetY: 2 })
-  }
-
-  // 消息项构建器
-  @Builder
-  MessageItemBuilder(message: ChatMessage) {
-    Row() {
       if (message.isUser) {
-        // 用户消息：右侧显示
-        Blank()
-        
-        Column() {
-          Text(message.content)
-            .fontSize(15)
-            .fontColor('#000000')
-            .maxLines(20)
-            .constraintSize({ maxWidth: '70%' })
-            .padding(12)
-            .backgroundColor('#95EC69')
-            .borderRadius(8)
-            .shadow({ radius: 2, color: 'rgba(0,0,0,0.05)', offsetY: 1 })
-          Text(message.timestamp)
-            .fontSize(10)
-            .fontColor('#999')
-            .margin({ top: 4 })
-        }
-        .alignItems(HorizontalAlign.End)
-        .margin({ right: 12 })
-
-        // 用户头像
-        Column() {
-          Text('我')
-            .fontSize(14)
-            .fontColor('#FFF')
-            .fontWeight(FontWeight.Bold)
-        }
-        .width(40)
-        .height(40)
-        .borderRadius(6)
-        .backgroundColor('#07C160')
-        .justifyContent(FlexAlign.Center)
-        .margin({ right: 12 })
-      } else {
-        // AI消息：左侧显示
-        // AI头像
-        Column() {
-          Text('AI')
-            .fontSize(14)
-            .fontColor('#FFF')
-            .fontWeight(FontWeight.Bold)
-        }
-        .width(40)
-        .height(40)
-        .borderRadius(6)
-        .backgroundColor('#576B95')
-        .justifyContent(FlexAlign.Center)
-        .margin({ left: 12 })
-
-        Column() {
-          Text(message.content)
-            .fontSize(15)
-            .fontColor('#000000')
-            .maxLines(20)
-            .constraintSize({ maxWidth: '70%' })
-            .padding(12)
-            .backgroundColor('#FFFFFF')
-            .borderRadius(8)
-            .shadow({ radius: 2, color: 'rgba(0,0,0,0.05)', offsetY: 1 })
-          Text(message.timestamp)
-            .fontSize(10)
-            .fontColor('#999')
-            .margin({ top: 4 })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .margin({ left: 12 })
-        
-        Blank()
+        this.AvatarBuilder('我', '#2D6A4F')
       }
     }
     .width('100%')
-    .padding({ top: 8, bottom: 8 })
+    .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+    .justifyContent(message.isUser ? FlexAlign.End : FlexAlign.Start)
     .alignItems(VerticalAlign.Top)
   }
 
-  // 底部输入区构建器
   @Builder
-  InputBuilder() {
-    Row() {
-      // 输入框
-      TextInput({ placeholder: '输入消息...', text: $$this.inputText })
-        .placeholderColor('#999')
-        .fontSize(15)
-        .height(44)
-        .backgroundColor('#FFFFFF')
-        .borderRadius(6)
-        .padding({ left: 12, right: 12 })
-        .layoutWeight(1)
-        .onSubmit(() => this.sendMessage())
+  private AvatarBuilder(label: string, color: string): void {
+    Column() {
+      Text(label)
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#FFFFFF')
+    }
+    .width(36)
+    .height(36)
+    .borderRadius(8)
+    .backgroundColor(color)
+    .justifyContent(FlexAlign.Center)
+  }
 
-      // 发送按钮
-      Button() {
-        Image($r('app.media.send_icon'))
-          .width(20)
-          .height(20)
-          .fillColor('#FFFFFF')
-      }
-      .width(44)
-      .height(44)
-      .margin({ left: 10 })
-      .backgroundColor('#07C160')
-      .borderRadius(6)
-      .enabled(!this.isLoading && this.inputText.trim() !== '')
-      .onClick(() => this.sendMessage())
+  @Builder
+  private InputBuilder(): void {
+    Row() {
+      TextInput({ placeholder: '输入消息，例如：帮我安排明天下午3点开会', text: $$this.inputText })
+        .layoutWeight(1)
+        .height(46)
+        .fontSize(14)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(12)
+        .padding({ left: 12, right: 12 })
+        .onSubmit((): void => {
+          this.sendMessage()
+        })
+
+      Button('发送')
+        .width(76)
+        .height(46)
+        .margin({ left: 10 })
+        .borderRadius(12)
+        .backgroundColor(this.isLoading || this.isInitializing ? '#9FB7A8' : '#2D6A4F')
+        .enabled(!this.isLoading && !this.isInitializing && this.inputText.trim().length > 0)
+        .onClick((): void => {
+          this.sendMessage()
+        })
     }
     .width('100%')
-    .height(70)
-    .padding({ left: 12, right: 12 })
-    .backgroundColor('#F7F7F7')
-    .border({ width: { top: 0.5 }, color: '#E5E5E5' })
+    .padding({ left: 12, right: 12, top: 10, bottom: 12 })
+    .backgroundColor('#F8FAFC')
+  }
+
+  build(): void {
+    Stack() {
+      Column() {
+        this.HeaderBuilder()
+        this.OverviewBuilder()
+        this.SchedulePanelBuilder()
+        this.ChatPanelBuilder()
+        this.InputBuilder()
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('#EEF2F6')
+
+      ActionDialog({
+        isShow: this.showActionDialog,
+        title: this.dialogTitle,
+        content: this.dialogContent,
+        onConfirm: (): void => this.handleDialogConfirm(),
+        onCancel: (): void => this.handleDialogCancel()
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('#EEF2F6')
   }
 }
+

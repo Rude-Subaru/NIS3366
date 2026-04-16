@@ -1,9 +1,7 @@
-/**
- * 执行确认弹窗组件
- * 负责：组长（UI）
- * 功能：显示操作确认弹窗，用户确认后才执行写操作
+﻿/**
+ * 执行确认弹窗。
+ * 当前用于日程添加等需要用户二次确认的动作。
  */
-
 @Component
 export struct ActionDialog {
   @Prop isShow: boolean
@@ -13,79 +11,50 @@ export struct ActionDialog {
   onCancel: () => void = () => {}
 
   build() {
-    Column() {
-      if (this.isShow) {
-        // 遮罩层
+    if (this.isShow) {
+      Stack() {
         Column()
           .width('100%')
           .height('100%')
-          .backgroundColor('rgba(0, 0, 0, 0.5)')
-          .position({ x: 0, y: 0 })
+          .backgroundColor('rgba(0, 0, 0, 0.35)')
           .onClick(() => this.onCancel())
 
-        // 弹窗内容
-        Column() {
-          // 标题
+        Column({ space: 16 }) {
           Text(this.title)
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#333')
-            .margin({ top: 20, bottom: 16 })
+            .fontColor('#1F2933')
 
-          // 内容
           Text(this.content)
-            .fontSize(15)
-            .fontColor('#666')
+            .fontSize(14)
+            .lineHeight(21)
+            .fontColor('#52606D')
             .textAlign(TextAlign.Center)
-            .maxLines(3)
-            .constraintSize({ maxWidth: '80%' })
-            .margin({ bottom: 20 })
 
-          // 分隔线
-          Divider()
-            .strokeWidth(0.5)
-            .color('#E5E5E5')
-            .width('100%')
-
-          // 按钮区
           Row() {
-            // 取消按钮
-            Button('拒绝')
-              .fontSize(16)
-              .fontColor('#999')
-              .backgroundColor('transparent')
+            Button('取消')
               .layoutWeight(1)
+              .backgroundColor('#E5E7EB')
+              .fontColor('#374151')
               .onClick(() => this.onCancel())
 
-            // 分隔线
-            Divider()
-              .vertical(true)
-              .strokeWidth(0.5)
-              .color('#E5E5E5')
-              .height(40)
+            Blank()
+              .width(12)
 
-            // 确认按钮
-            Button('同意执行')
-              .fontSize(16)
-              .fontColor('#07C160')
-              .fontWeight(FontWeight.Bold)
-              .backgroundColor('transparent')
+            Button('确认')
               .layoutWeight(1)
+              .backgroundColor('#2D6A4F')
+              .fontColor('#FFFFFF')
               .onClick(() => this.onConfirm())
           }
-          .width('100%')
-          .height(50)
         }
-        .width('80%')
+        .width('82%')
+        .padding(20)
         .backgroundColor('#FFFFFF')
-        .borderRadius(12)
-        .shadow({ radius: 20, color: 'rgba(0,0,0,0.2)' })
-        .position({ x: '10%', y: '35%' })
+        .borderRadius(16)
       }
+      .width('100%')
+      .height('100%')
     }
-    .width('100%')
-    .height('100%')
-    .position({ x: 0, y: 0 })
-    .pointerEvents(this.isShow ? PointerEvents.Auto : PointerEvents.None)
   }
 }

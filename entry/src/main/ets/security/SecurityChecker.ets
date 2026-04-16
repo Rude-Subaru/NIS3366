@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 安全检查模块
  * 负责：在写执行体解析前，对大模型返回内容做结构和内容安全校验。
  *
@@ -15,6 +15,23 @@ export interface SecurityCheckResult {
   action?: string
   needsConfirmation?: boolean
 }
+
+interface ContentReviewResult {
+  safe: boolean
+  reason?: string
+}
+
+interface ParsedSecurityPayload {
+  action?: FlexibleValue
+  reply?: FlexibleValue
+  data?: FlexibleValue
+  content?: FlexibleValue
+  title?: FlexibleValue
+  event?: FlexibleValue
+  topic?: FlexibleValue
+}
+
+type FlexibleValue = string | number | boolean | object | object[] | null | undefined
 
 export class SecurityChecker {
   private readonly MAX_CONTENT_LENGTH: number = 10000
@@ -123,52 +140,62 @@ export class SecurityChecker {
 
     const text = this.normalizeString(content)
     if (text.length === 0) {
-      return { safe: false, reason: '内容为空' }
+      const result: SecurityCheckResult = { safe: false, reason: '内容为空' }
+      return result
     }
 
     if (text.length > this.MAX_CONTENT_LENGTH) {
-      return { safe: false, reason: '内容过长' }
+      const result: SecurityCheckResult = { safe: false, reason: '内容过长' }
+      return result
     }
 
-    let parsed: any
+    let parsed: ParsedSecurityPayload
     try {
       parsed = this.extractJSON(text)
-    } catch (e) {
-      return { safe: false, reason: 'JSON格式异常' }
+    } catch (error) {
+      const result: SecurityCheckResult = { safe: false, reason: 'JSON格式异常' }
+      return result
     }
 
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return { safe: false, reason: 'JSON结构异常' }
+      const result: SecurityCheckResult = { safe: false, reason: 'JSON结构异常' }
+      return result
     }
 
     const action = this.normalizeAction(parsed.action)
     if (action.length === 0) {
-      return { safe: false, reason: '缺少action字段' }
+      const result: SecurityCheckResult = { safe: false, reason: '缺少action字段' }
+      return result
     }
 
     if (this.blockedActions.includes(action)) {
-      return { safe: false, action: action, reason: `禁止执行${action}操作` }
+      const result: SecurityCheckResult = { safe: false, action: action, reason: `禁止执行${action}操作` }
+      return result
     }
 
     if (!this.allowedActions.includes(action)) {
-      return { safe: false, action: action, reason: `不支持的action: ${action}` }
+      const result: SecurityCheckResult = { safe: false, action: action, reason: `不支持的action: ${action}` }
+      return result
     }
 
     const reviewText = this.collectReviewText(parsed)
     const keywordReason = this.findUnsafeKeyword(reviewText, action)
     if (keywordReason.length > 0) {
-      return { safe: false, action: action, reason: keywordReason }
+      const result: SecurityCheckResult = { safe: false, action: action, reason: keywordReason }
+      return result
     }
 
     if (this.containsPromptInjection(reviewText)) {
-      return { safe: false, action: action, reason: '疑似提示词注入或绕过确认' }
+      const result: SecurityCheckResult = { safe: false, action: action, reason: '疑似提示词注入或绕过确认' }
+      return result
     }
 
-    return {
+    const result: SecurityCheckResult = {
       safe: true,
       action: action,
       needsConfirmation: this.needsConfirmation(action)
     }
+    return result
   }
 
   /**
@@ -179,28 +206,33 @@ export class SecurityChecker {
     const normalizedAction = this.normalizeAction(action)
 
     if (normalizedAction.length === 0) {
-      return { safe: false, reason: '动作为空' }
+      const result: SecurityCheckResult = { safe: false, reason: '动作为空' }
+      return result
     }
 
     if (this.blockedActions.includes(normalizedAction)) {
-      return { safe: false, action: normalizedAction, reason: `禁止执行${normalizedAction}操作` }
+      const result: SecurityCheckResult = { safe: false, action: normalizedAction, reason: `禁止执行${normalizedAction}操作` }
+      return result
     }
 
     if (!this.allowedActions.includes(normalizedAction)) {
-      return { safe: false, action: normalizedAction, reason: `不支持的action: ${normalizedAction}` }
+      const result: SecurityCheckResult = { safe: false, action: normalizedAction, reason: `不支持的action: ${normalizedAction}` }
+      return result
     }
 
     const dataText = this.normalizeString(data)
     const keywordReason = this.findUnsafeKeyword(dataText, normalizedAction)
     if (keywordReason.length > 0) {
-      return { safe: false, action: normalizedAction, reason: keywordReason }
+      const result: SecurityCheckResult = { safe: false, action: normalizedAction, reason: keywordReason }
+      return result
     }
 
-    return {
+    const result: SecurityCheckResult = {
       safe: true,
       action: normalizedAction,
       needsConfirmation: this.needsConfirmation(normalizedAction)
     }
+    return result
   }
 
   /**
@@ -213,7 +245,7 @@ export class SecurityChecker {
   /**
    * 添加危险关键词。
    */
-  addDangerousKeyword(keyword: string) {
+  addDangerousKeyword(keyword: string): void {
     const normalized = this.normalizeString(keyword)
     if (normalized.length > 0 && !this.dangerousKeywords.includes(normalized)) {
       this.dangerousKeywords.push(normalized)
@@ -223,35 +255,40 @@ export class SecurityChecker {
   /**
    * 设置敏感操作列表。
    */
-  setSensitiveActions(actions: string[]) {
+  setSensitiveActions(actions: string[]): void {
     this.sensitiveActions = actions
-      .map((action: string) => this.normalizeAction(action))
-      .filter((action: string) => action.length > 0)
+      .map((action: string): string => this.normalizeAction(action))
+      .filter((action: string): boolean => action.length > 0)
   }
 
   /**
    * 内容审查接口。
    * 当前为本地规则实现，后续可替换为第三方内容审核API。
    */
-  async contentReview(text: string): Promise<{ safe: boolean, reason?: string }> {
+  async contentReview(text: string): Promise<ContentReviewResult> {
     const reviewText = this.normalizeString(text)
     if (reviewText.length === 0) {
-      return { safe: false, reason: '内容为空' }
+      const result: ContentReviewResult = { safe: false, reason: '内容为空' }
+      return result
     }
     if (reviewText.length > this.MAX_CONTENT_LENGTH) {
-      return { safe: false, reason: '内容过长' }
+      const result: ContentReviewResult = { safe: false, reason: '内容过长' }
+      return result
     }
 
     const keywordReason = this.findUnsafeKeyword(reviewText, '')
     if (keywordReason.length > 0) {
-      return { safe: false, reason: keywordReason }
+      const result: ContentReviewResult = { safe: false, reason: keywordReason }
+      return result
     }
 
     if (this.containsPromptInjection(reviewText)) {
-      return { safe: false, reason: '疑似提示词注入' }
+      const result: ContentReviewResult = { safe: false, reason: '疑似提示词注入' }
+      return result
     }
 
-    return { safe: true }
+    const result: ContentReviewResult = { safe: true }
+    return result
   }
 
   private findUnsafeKeyword(content: string, action: string): string {
@@ -301,7 +338,7 @@ export class SecurityChecker {
   }
 
   private isSupportivePsychContent(content: string): boolean {
-    const supportWords = ['联系', '求助', '专业', '帮助', '热线', '不要伤害', '安全']
+    const supportWords: string[] = ['联系', '求助', '专业', '帮助', '热线', '不要伤害', '安全']
     for (const word of supportWords) {
       if (content.includes(word)) {
         return true
@@ -310,7 +347,7 @@ export class SecurityChecker {
     return false
   }
 
-  private collectReviewText(parsed: any): string {
+  private collectReviewText(parsed: ParsedSecurityPayload): string {
     const parts: string[] = []
     parts.push(this.normalizeString(parsed.action))
     parts.push(this.normalizeString(parsed.reply))
@@ -319,14 +356,14 @@ export class SecurityChecker {
     parts.push(this.normalizeString(parsed.title))
     parts.push(this.normalizeString(parsed.event))
     parts.push(this.normalizeString(parsed.topic))
-    return parts.filter((item: string) => item.length > 0).join('\n')
+    return parts.filter((item: string): boolean => item.length > 0).join('\n')
   }
 
-  private normalizeAction(action: any): string {
+  private normalizeAction(action: FlexibleValue): string {
     return this.normalizeString(action).trim().toLowerCase()
   }
 
-  private normalizeString(value: any): string {
+  private normalizeString(value: FlexibleValue): string {
     if (value === undefined || value === null) {
       return ''
     }
@@ -338,22 +375,22 @@ export class SecurityChecker {
     }
     try {
       return JSON.stringify(value)
-    } catch (e) {
+    } catch (error) {
       return ''
     }
   }
 
-  private extractJSON(text: string): any {
+  private extractJSON(text: string): ParsedSecurityPayload {
     try {
-      return JSON.parse(text)
-    } catch (e) {
+      return JSON.parse(text) as ParsedSecurityPayload
+    } catch (error) {
       const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
       if (codeBlockMatch && codeBlockMatch[1]) {
-        return JSON.parse(codeBlockMatch[1].trim())
+        return JSON.parse(codeBlockMatch[1].trim()) as ParsedSecurityPayload
       }
 
       const jsonText = this.findFirstJSONObject(text)
-      return JSON.parse(jsonText)
+      return JSON.parse(jsonText) as ParsedSecurityPayload
     }
   }
 

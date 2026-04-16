@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 写执行体
  * 负责：解析大模型返回的JSON，并把不同Action整理成主页面可执行的数据。
  *
@@ -44,6 +44,18 @@ export interface ActionResult {
   errorMessage?: string
 }
 
+interface ParsedActionPayload {
+  action?: FlexibleValue
+  reply?: FlexibleValue
+  data?: FlexibleValue
+  content?: FlexibleValue
+  title?: FlexibleValue
+  event?: FlexibleValue
+  topic?: FlexibleValue
+}
+
+type FlexibleValue = string | number | boolean | object | object[] | null | undefined
+
 export class WriteExecutor {
   private readonly MAX_REPLY_LENGTH: number = 1000
 
@@ -86,7 +98,7 @@ export class WriteExecutor {
         case 'schedule': {
           const scheduleContent = rawData.length > 0 ? rawData : this.extractScheduleContentFromReply(reply)
           const scheduleDetail = this.parseScheduleDetail(scheduleContent.length > 0 ? scheduleContent : '新日程安排')
-          return {
+          const result: ActionResult = {
             action: 'schedule',
             reply: reply,
             data: scheduleDetail.displayContent,
@@ -94,12 +106,13 @@ export class WriteExecutor {
             scheduleDetail: scheduleDetail,
             valid: true
           }
+          return result
         }
 
         case 'study': {
           const topic = rawData.length > 0 ? rawData : this.extractStudyTopic(reply)
           const recommendation = this.getStudyRecommendation(topic.length > 0 ? topic : '当前学习内容')
-          return {
+          const result: ActionResult = {
             action: 'study',
             reply: reply,
             data: recommendation.topic,
@@ -107,6 +120,7 @@ export class WriteExecutor {
             studyRecommendation: recommendation,
             valid: true
           }
+          return result
         }
 
         case 'psych': {
@@ -227,52 +241,57 @@ export class WriteExecutor {
     const lowerTopic = normalizedTopic.toLowerCase()
 
     if (lowerTopic.includes('python')) {
-      return {
+      const result: StudyRecommendation = {
         topic: 'Python',
         difficulty: '初级',
         duration: '2周',
         resources: ['Python官方教程', '廖雪峰Python教程', '基础语法练习题'],
         plan: ['第1-3天：变量、条件、循环', '第4-7天：函数、列表、字典', '第2周：文件处理和小项目']
       }
+      return result
     }
 
     if (normalizedTopic.includes('数据结构') || normalizedTopic.includes('算法')) {
-      return {
+      const result: StudyRecommendation = {
         topic: '数据结构与算法',
         difficulty: '中级',
         duration: '3周',
         resources: ['数组与链表专题', '栈队列树图专题', 'LeetCode基础题单'],
         plan: ['第1周：线性结构', '第2周：树和图', '第3周：排序、搜索和综合练习']
       }
+      return result
     }
 
     if (normalizedTopic.includes('鸿蒙') || lowerTopic.includes('arkts') || lowerTopic.includes('harmony')) {
-      return {
+      const result: StudyRecommendation = {
         topic: 'HarmonyOS ArkTS',
         difficulty: '初级',
         duration: '2周',
         resources: ['ArkTS基础语法', '声明式UI组件', '应用状态管理示例'],
         plan: ['第1周：语法和常用组件', '第2周：页面跳转、网络请求和数据存储']
       }
+      return result
     }
 
     if (normalizedTopic.includes('英语')) {
-      return {
+      const result: StudyRecommendation = {
         topic: '英语',
         difficulty: '按当前水平调整',
         duration: '4周',
         resources: ['高频词汇表', '听力精听材料', '口语跟读练习'],
         plan: ['每天20分钟单词', '每天15分钟听力', '每周完成2次口语复述']
       }
+      return result
     }
 
-    return {
+    const result: StudyRecommendation = {
       topic: normalizedTopic,
       difficulty: '初级',
       duration: '2周',
       resources: ['入门教程', '基础练习', '阶段性复盘清单'],
       plan: ['先梳理核心概念', '再完成小练习', '最后做一次总结复盘']
     }
+    return result
   }
 
   /**
@@ -286,25 +305,26 @@ export class WriteExecutor {
   }
 
   private createChatFallback(reply: string, reason: string): ActionResult {
-    return {
+    const result: ActionResult = {
       action: 'chat',
       reply: reply,
       valid: false,
       errorMessage: reason
     }
+    return result
   }
 
-  private extractJSON(text: string): any {
+  private extractJSON(text: string): ParsedActionPayload {
     try {
-      return JSON.parse(text)
-    } catch (e) {
+      return JSON.parse(text) as ParsedActionPayload
+    } catch (error) {
       const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
       if (codeBlockMatch && codeBlockMatch[1]) {
-        return JSON.parse(codeBlockMatch[1].trim())
+        return JSON.parse(codeBlockMatch[1].trim()) as ParsedActionPayload
       }
 
       const jsonText = this.findFirstJSONObject(text)
-      return JSON.parse(jsonText)
+      return JSON.parse(jsonText) as ParsedActionPayload
     }
   }
 
@@ -370,7 +390,7 @@ export class WriteExecutor {
     return 'unknown'
   }
 
-  private normalizeReply(reply: any, action: string): string {
+  private normalizeReply(reply: FlexibleValue, action: string): string {
     const text = this.normalizeString(reply)
     if (text.length > 0) {
       return this.truncate(text, this.MAX_REPLY_LENGTH)
@@ -390,12 +410,11 @@ export class WriteExecutor {
     }
   }
 
-  private normalizeData(data: any, parsed?: any): string {
+  private normalizeData(data: FlexibleValue, parsed?: ParsedActionPayload): string {
     if (data === undefined || data === null) {
       if (parsed) {
-        const candidates = ['content', 'title', 'event', 'topic', 'text']
-        for (const key of candidates) {
-          const value = parsed[key]
+        const fallbackValues: FlexibleValue[] = [parsed.content, parsed.title, parsed.event, parsed.topic]
+        for (const value of fallbackValues) {
           const normalized = this.normalizeString(value)
           if (normalized.length > 0) {
             return normalized
@@ -414,13 +433,14 @@ export class WriteExecutor {
     }
 
     if (Array.isArray(data)) {
-      const parts = data.map((item: any) => this.normalizeData(item)).filter((item: string) => item.length > 0)
+      const parts = data.map((item: object | string | number | boolean | null | undefined): string => this.normalizeData(item)).filter((item: string): boolean => item.length > 0)
       return parts.join('；')
     }
 
-    const event = this.normalizeString(data.event || data.title || data.content || data.name || data.topic)
-    const time = this.normalizeString(data.time || data.remindTime || data.date || data.datetime)
-    const location = this.normalizeString(data.location || data.place)
+    const dataRecord = data as Record<string, FlexibleValue>
+    const event = this.normalizeString(dataRecord['event'] ?? dataRecord['title'] ?? dataRecord['content'] ?? dataRecord['name'] ?? dataRecord['topic'])
+    const time = this.normalizeString(dataRecord['time'] ?? dataRecord['remindTime'] ?? dataRecord['date'] ?? dataRecord['datetime'])
+    const location = this.normalizeString(dataRecord['location'] ?? dataRecord['place'])
     const parts: string[] = []
 
     if (time.length > 0) {
@@ -439,12 +459,12 @@ export class WriteExecutor {
 
     try {
       return JSON.stringify(data)
-    } catch (e) {
+    } catch (error) {
       return ''
     }
   }
 
-  private normalizeString(value: any): string {
+  private normalizeString(value: FlexibleValue): string {
     if (value === undefined || value === null) {
       return ''
     }
@@ -456,7 +476,7 @@ export class WriteExecutor {
     }
     try {
       return JSON.stringify(value)
-    } catch (e) {
+    } catch (error) {
       return ''
     }
   }
@@ -474,7 +494,7 @@ export class WriteExecutor {
   }
 
   private extractStudyTopic(text: string): string {
-    const topicPatterns = [
+    const topicPatterns: RegExp[] = [
       /(?:学习|学|复习|推荐)(.+?)(?:课程|资料|内容|$)/,
       /关于(.+?)(?:的学习|的资料|$)/
     ]
@@ -564,7 +584,7 @@ export class WriteExecutor {
       }
     }
 
-    const clockMatch = content.match(/(凌晨|早上|上午|中午|下午|晚上|今晚)?\s*([0-9]{1,2}|[零〇一二两三四五六七八九十]{1,3})\s*[点时](半|一刻|三刻|[0-9]{1,2}\s*分?|[零〇一二两三四五六七八九十]{1,3}\s*分?)?/)
+    const clockMatch = content.match(/(凌晨|早上|上午|中午|下午|晚上|今晚)?\s*([0-9]{1,2}|[零〇一二两三四五六七八九十]{1,3})\s*[点时](半|一刻|三刻|[0-9]{1,2}\s*分?|[零〇一二两三四五六七八九十]{1,3}\s*分?)?/) 
     if (!clockMatch) {
       return null
     }
@@ -596,9 +616,9 @@ export class WriteExecutor {
   }
 
   private extractLocation(content: string): string | null {
-    const patterns = [
+    const patterns: RegExp[] = [
       /在([^，。；\n]+?)(?:开会|会议|上课|学习|面试|见面|吃饭|汇报|讨论|提醒|$)/,
-      /去([^，。；\n]+?)(?:开会|会议|上课|学习|面试|见面|吃饭|汇报|讨论|$)/
+      /去([^，。；\n]+?)(?:开会|会议|上课|学习|面试|见面|吃饭|汇报|讨论|提醒|$)/
     ]
 
     for (const pattern of patterns) {
@@ -663,34 +683,37 @@ export class WriteExecutor {
 
   private analyzePsychState(text: string): PsychState {
     const normalized = this.normalizeString(text)
-    const highKeywords = ['崩溃', '绝望', '活不下去', '自杀', '自残']
-    const mediumKeywords = ['焦虑', '压力', '难过', '失眠', '痛苦', '害怕']
-    const lowKeywords = ['累', '烦', '低落', '郁闷', '不开心']
+    const highKeywords: string[] = ['崩溃', '绝望', '活不下去', '自杀', '自残']
+    const mediumKeywords: string[] = ['焦虑', '压力', '难过', '失眠', '痛苦', '害怕']
+    const lowKeywords: string[] = ['累', '烦', '低落', '郁闷', '不开心']
 
-    const matchedHigh = highKeywords.filter((keyword: string) => normalized.includes(keyword))
+    const matchedHigh = highKeywords.filter((keyword: string): boolean => normalized.includes(keyword))
     if (matchedHigh.length > 0) {
-      return {
+      const result: PsychState = {
         level: 'high',
         keywords: matchedHigh,
         suggestion: '建议尽快联系可信任的人或专业心理援助渠道。'
       }
+      return result
     }
 
-    const matchedMedium = mediumKeywords.filter((keyword: string) => normalized.includes(keyword))
+    const matchedMedium = mediumKeywords.filter((keyword: string): boolean => normalized.includes(keyword))
     if (matchedMedium.length > 0) {
-      return {
+      const result: PsychState = {
         level: 'medium',
         keywords: matchedMedium,
         suggestion: '建议先做情绪记录，并安排短时间休息。'
       }
+      return result
     }
 
-    const matchedLow = lowKeywords.filter((keyword: string) => normalized.includes(keyword))
-    return {
+    const matchedLow = lowKeywords.filter((keyword: string): boolean => normalized.includes(keyword))
+    const result: PsychState = {
       level: 'low',
       keywords: matchedLow,
       suggestion: '可以继续倾诉，也可以做一次简单复盘。'
     }
+    return result
   }
 
   private addDays(date: Date, days: number): Date {
@@ -827,3 +850,4 @@ export class WriteExecutor {
     return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   }
 }
+
