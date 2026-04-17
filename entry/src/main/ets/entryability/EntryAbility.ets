@@ -1,5 +1,6 @@
 import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
+import { DatabaseManager } from '../database/DatabaseManager';
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
@@ -10,10 +11,19 @@ export default class EntryAbility extends UIAbility {
     console.info('[EntryAbility] onDestroy');
   }
 
-  onWindowStageCreate(windowStage: window.WindowStage): void {
+  async onWindowStageCreate(windowStage: window.WindowStage): Promise<void> {
     console.info('[EntryAbility] onWindowStageCreate');
 
-    windowStage.loadContent('pages/Index', (err) => {
+    // 检查登录状态，决定加载哪个页面
+    const dbManager = new DatabaseManager();
+    dbManager.setContext(this.context);
+    await dbManager.initDB();
+    const isLoggedIn = await dbManager.isLoggedIn();
+    await dbManager.closeDB();
+
+    const targetPage = isLoggedIn ? 'pages/Index' : 'pages/Login';
+
+    windowStage.loadContent(targetPage, (err) => {
       if (err.code) {
         console.error('[EntryAbility] Failed to load content');
         return;

@@ -5,6 +5,7 @@ import { ReadExecutor } from '../executors/ReadExecutor'
 import { WriteExecutor, ActionResult } from '../executors/WriteExecutor'
 import { SecurityChecker } from '../security/SecurityChecker'
 import { ActionDialog } from '../components/ActionDialog'
+import { router } from '@kit.ArkUI'
 
 /** 聊天气泡在页面层使用的轻量模型。 */
 class ChatMessage {
@@ -41,6 +42,12 @@ struct Index {
   @State private pendingSchedule: ScheduleRecord | null = null
   @State private lastSecurityHint: string = ''
   @State private sendBtnScale: number = 1
+  @State private currentUsername: string = ''
+  // 聊天记录面板拖动相关
+  @State private chatPanelOffsetY: number = 0
+  @State private isDragging: boolean = false
+  private dragStartOffsetY: number = 0
+  private totalDragDistance: number = 0
 
   private readonly listScroller: Scroller = new Scroller()
   private readonly dbManager: DatabaseManager = new DatabaseManager()
@@ -57,6 +64,12 @@ struct Index {
       this.isInitializing = false
       await this.addTransientMessage('数据库初始化失败，请检查运行环境。', false)
       return
+    }
+
+    // 加载当前用户信息
+    const currentUser = await this.dbManager.getCurrentUser()
+    if (currentUser) {
+      this.currentUsername = currentUser.username
     }
 
     await this.loadInitialData()
@@ -272,9 +285,18 @@ struct Index {
     await this.addMessage('已将该日程标记为完成。', false)
   }
 
+  private async handleLogout(): Promise<void> {
+    await this.dbManager.logout()
+    router.replaceUrl({ url: 'pages/Login' })
+  }
+
   private handleDialogConfirm(): void { this.onDialogConfirm() }
   private handleDialogCancel(): void { this.onDialogCancel() }
   private handleMarkScheduleDone(scheduleId: number): void { this.markScheduleDone(scheduleId) }
+
+  private goToChatDetail(): void {
+    router.pushUrl({ url: 'pages/ChatDetail' })
+  }
 
   /* ========================= 现代化 UI 构建 ========================= */
 
@@ -306,6 +328,23 @@ struct Index {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .margin({ top: 4 })
       }
+
+      // 用户信息和退出登录
+      if (this.currentUsername.length > 0) {
+        Row({ space: 8 }) {
+          Text(`👤 ${this.currentUsername}`)
+            .fontSize(11)
+            .fontColor('rgba(255,255,255,0.85)')
+          Text('退出')
+            .fontSize(11)
+            .fontColor('rgba(255,255,255,0.7)')
+            .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+            .backgroundColor('rgba(255,255,255,0.15)')
+            .borderRadius(8)
+            .onClick(() => this.handleLogout())
+        }
+        .margin({ top: 6 })
+      }
     }
     .width('100%')
     .padding({ top: 16, bottom: 14 })
@@ -321,19 +360,19 @@ struct Index {
     Row() {
       this.OverviewCardBuilder(
         '💬 聊天记录',
-        `${this.messageList.length}`,
+        `${this.messageCount}`,
         '#3B82F6',
         '#EFF6FF'
       )
       this.OverviewCardBuilder(
         '📋 待办日程',
-        `${this.scheduleList.filter((item: ScheduleRecord): boolean => !item.isDone).length}`,
+        `${this.pendingScheduleCount}`,
         '#F59E0B',
         '#FFFBEB'
       )
       this.OverviewCardBuilder(
         '✅ 已完成',
-        `${this.scheduleList.filter((item: ScheduleRecord): boolean => item.isDone).length}`,
+        `${this.completedScheduleCount}`,
         '#10B981',
         '#ECFDF5'
       )
@@ -494,6 +533,7 @@ struct Index {
   @Builder
   private ChatPanelBuilder(): void {
     Column() {
+      // 可拖动的标题栏
       Row() {
         Row({ space: 6 }) {
           Text('💬')
@@ -505,6 +545,21 @@ struct Index {
         }
 
         Blank()
+
+        // 拖动指示器
+        Column({ space: 2 }) {
+          Row()
+            .width(20)
+            .height(3)
+            .backgroundColor('#CBD5E1')
+            .borderRadius(2)
+          Row()
+            .width(20)
+            .height(3)
+            .backgroundColor('#CBD5E1')
+            .borderRadius(2)
+        }
+        .margin({ right: 8 })
 
         if (this.isLoading) {
           Row({ space: 6 }) {
@@ -518,9 +573,42 @@ struct Index {
           }
           .animation({ duration: 300, curve: Curve.EaseInOut })
         }
+
+        Text('进入')
+          .fontSize(11)
+          .fontColor('#2D6A4F')
+          .fontWeight(FontWeight.Medium)
+          .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+          .backgroundColor('#ECFDF5')
+          .borderRadius(8)
       }
       .width('100%')
       .padding({ left: 12, right: 12, top: 14, bottom: 6 })
+      .gesture(
+        PanGesture()
+          .onActionStart(() => {
+            this.isDragging = true
+            this.dragStartOffsetY = this.chatPanelOffsetY
+            this.totalDragDistance = 0
+          })
+          .onActionUpdate((event) => {
+            // 限制拖动范围，只允许上下微调位置
+            const newOffset = this.chatPanelOffsetY + event.offsetY
+            this.chatPanelOffsetY = Math.max(-200, Math.min(200, newOffset))
+            this.totalDragDistance += Math.abs(event.offsetY)
+          })
+          .onActionEnd(() => {
+            this.isDragging = false
+            // 如果总拖动距离很小，视为点击，重置偏移并跳转页面
+            if (this.totalDragDistance < 20) {
+              this.chatPanelOffsetY = 0
+              this.goToChatDetail()
+            }
+          })
+      )
+      .onClick(() => {
+        this.goToChatDetail()
+      })
 
       if (this.messageList.length === 0 && !this.isInitializing) {
         Column({ space: 10 }) {
@@ -555,6 +643,8 @@ struct Index {
     }
     .layoutWeight(1)
     .width('100%')
+    .offset({ y: this.chatPanelOffsetY })
+    .animation({ duration: 200, curve: Curve.EaseOut })
   }
 
   @Builder
