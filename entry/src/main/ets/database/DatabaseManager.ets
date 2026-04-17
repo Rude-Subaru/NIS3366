@@ -132,6 +132,7 @@ export class DatabaseManager {
 
   async closeDB(): Promise<boolean> {
     if (DatabaseManager.store !== null) {
+      await (DatabaseManager.store as relationalStore.RdbStore).close()
       DatabaseManager.store = null
       DatabaseManager.initialized = false
     }
