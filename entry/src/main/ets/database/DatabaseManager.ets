@@ -1,7 +1,7 @@
 ﻿import relationalStore from '@ohos.data.relationalStore'
 import common from '@ohos.app.ability.common'
 
-/** 聊天记录表对应的数据模型。 */
+/** 聊天记录表对应的数据模型 */
 export interface MessageRecord {
   id: number
   content: string
@@ -9,7 +9,7 @@ export interface MessageRecord {
   timestamp: string
 }
 
-/** 日程表对应的数据模型。 */
+/** 日程表对应的数据模型 */
 export interface ScheduleRecord {
   id: number
   content: string
@@ -27,8 +27,8 @@ const MESSAGE_COLUMNS: string[] = ['id', 'content', 'isUser', 'timestamp']
 const SCHEDULE_COLUMNS: string[] = ['id', 'content', 'createdTime', 'remindTime', 'isDone']
 
 /**
- * 数据库管理器。
- * 按作业要求提供 Messages 和 Schedules 两张表的初始化与 CRUD 操作。
+ * 数据库管理器 (同学B的核心任务1)
+ * 负责 SQLite 数据库的初始化以及 Messages 和 Schedules 表的 CRUD 操作。
  */
 export class DatabaseManager {
   private static context: common.UIAbilityContext | null = null
@@ -39,6 +39,7 @@ export class DatabaseManager {
     DatabaseManager.context = context
   }
 
+  // 1. 初始化并建表
   async initDB(): Promise<boolean> {
     if (DatabaseManager.initialized && DatabaseManager.store !== null) {
       return true
@@ -51,9 +52,11 @@ export class DatabaseManager {
 
     try {
       const store: relationalStore.RdbStore = await relationalStore.getRdbStore(DatabaseManager.context, STORE_CONFIG)
+      // 创建聊天记录表
       await store.executeSql(
         'CREATE TABLE IF NOT EXISTS Messages (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL, isUser INTEGER NOT NULL, timestamp TEXT NOT NULL)'
       )
+      // 创建日程表
       await store.executeSql(
         'CREATE TABLE IF NOT EXISTS Schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL, createdTime TEXT NOT NULL, remindTime TEXT, isDone INTEGER DEFAULT 0)'
       )
@@ -67,6 +70,7 @@ export class DatabaseManager {
     }
   }
 
+  // 2. 存储聊天消息 (对应分工图中的 saveMessage)
   async saveMessage(content: string, isUser: boolean): Promise<MessageRecord> {
     await this.ensureStoreReady()
     const timestamp: string = new Date().toISOString()
@@ -77,24 +81,22 @@ export class DatabaseManager {
     }
 
     const rowId: number = await (DatabaseManager.store as relationalStore.RdbStore).insert('Messages', valueBucket)
-    return {
-      id: rowId,
-      content,
-      isUser,
-      timestamp
-    }
+    return { id: rowId, content, isUser, timestamp }
   }
 
+  // 3. 获取近期对话记忆 (对应分工图中的 getRecentMemory)
   async getRecentMessages(count: number): Promise<MessageRecord[]> {
     await this.ensureStoreReady()
     const predicates: relationalStore.RdbPredicates = new relationalStore.RdbPredicates('Messages')
     predicates.orderByDesc('id').limitAs(count)
     const resultSet: relationalStore.ResultSet = await (DatabaseManager.store as relationalStore.RdbStore).query(predicates, MESSAGE_COLUMNS)
     const records: MessageRecord[] = this.readMessages(resultSet)
+    // 按照时间正序排列给大模型
     records.reverse()
     return records
   }
 
+  // 4. 存储日程安排 (对应分工图中的 saveSchedule)
   async saveSchedule(content: string, remindTime?: string): Promise<ScheduleRecord> {
     await this.ensureStoreReady()
     const createdTime: string = new Date().toISOString()
@@ -106,13 +108,7 @@ export class DatabaseManager {
     }
 
     const rowId: number = await (DatabaseManager.store as relationalStore.RdbStore).insert('Schedules', valueBucket)
-    return {
-      id: rowId,
-      content,
-      createdTime,
-      remindTime,
-      isDone: false
-    }
+    return { id: rowId, content, createdTime, remindTime, isDone: false }
   }
 
   async getAllSchedules(): Promise<ScheduleRecord[]> {
@@ -127,9 +123,7 @@ export class DatabaseManager {
     await this.ensureStoreReady()
     const predicates: relationalStore.RdbPredicates = new relationalStore.RdbPredicates('Schedules')
     predicates.equalTo('id', scheduleId)
-    const valueBucket: relationalStore.ValuesBucket = {
-      isDone: 1
-    }
+    const valueBucket: relationalStore.ValuesBucket = { isDone: 1 }
 
     const changedRows: number = await (DatabaseManager.store as relationalStore.RdbStore).update(valueBucket, predicates)
     return changedRows > 0
@@ -150,7 +144,6 @@ export class DatabaseManager {
     }
   }
 
-  /** 把 ResultSet 转成消息数组，供页面和读执行体直接使用。 */
   private readMessages(resultSet: relationalStore.ResultSet): MessageRecord[] {
     const records: MessageRecord[] = []
     if (resultSet.rowCount === 0) {
@@ -165,13 +158,12 @@ export class DatabaseManager {
 
     if (resultSet.goToFirstRow()) {
       do {
-        const record: MessageRecord = {
+        records.push({
           id: resultSet.getLong(idIndex),
           content: resultSet.getString(contentIndex),
           isUser: resultSet.getLong(isUserIndex) === 1,
           timestamp: resultSet.getString(timestampIndex)
-        }
-        records.push(record)
+        })
       } while (resultSet.goToNextRow())
     }
 
@@ -179,7 +171,6 @@ export class DatabaseManager {
     return records
   }
 
-  /** 把 ResultSet 转成日程数组，供页面展示和完成操作使用。 */
   private readSchedules(resultSet: relationalStore.ResultSet): ScheduleRecord[] {
     const records: ScheduleRecord[] = []
     if (resultSet.rowCount === 0) {
@@ -195,18 +186,14 @@ export class DatabaseManager {
 
     if (resultSet.goToFirstRow()) {
       do {
-        const remindTime: string | undefined = resultSet.isColumnNull(remindTimeIndex)
-          ? undefined
-          : resultSet.getString(remindTimeIndex)
-
-        const record: ScheduleRecord = {
+        const remindTime: string | undefined = resultSet.isColumnNull(remindTimeIndex) ? undefined : resultSet.getString(remindTimeIndex)
+        records.push({
           id: resultSet.getLong(idIndex),
           content: resultSet.getString(contentIndex),
           createdTime: resultSet.getString(createdTimeIndex),
           remindTime,
           isDone: resultSet.getLong(isDoneIndex) === 1
-        }
-        records.push(record)
+        })
       } while (resultSet.goToNextRow())
     }
 
