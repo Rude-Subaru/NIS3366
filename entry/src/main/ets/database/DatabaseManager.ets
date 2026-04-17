@@ -1,6 +1,7 @@
 ﻿import relationalStore from '@ohos.data.relationalStore'
 import common from '@ohos.app.ability.common'
 
+
 /** 聊天记录表对应的数据模型 */
 export interface MessageRecord {
   id: number

@@ -11,6 +11,7 @@ interface SystemInfo {
   deviceModel: string
 }
 
+
 /**
  * 读执行体 (同学B的核心任务2)
  * 负责采集系统信息和最近对话，组装给大模型的 Prompt (即 generatePrompt 逻辑)。
