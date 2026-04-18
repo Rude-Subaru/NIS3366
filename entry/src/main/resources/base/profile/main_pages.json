@@ -1,7 +1,0 @@
-{
-  "src": [
-    "pages/Login",
-    "pages/Index",
-    "pages/ChatDetail"
-  ]
-}
