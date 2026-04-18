@@ -31,14 +31,16 @@ interface ActionResponsePayload {
 
 /**
  * 大模型服务。
- * 已接入上海交大模型服务 API，并修复了降级模式下 prompt 泄露的 Bug。
+ * 统一封装真实接口调用与本地降级 Mock。
+ * 页面层只关心“给我一个字符串结果”，不需要知道网络请求细节。
  */
 export class LLMService {
   private apiUrl: string = 'https://models.sjtu.edu.cn/api/v1/chat/completions'
-  private apiKey: string = 'API protection'
+  private apiKey: string = 'sk-4pAY_1zmiNPFg2ZDBI4aXA'
   private model: string = 'glm-5'
   private useMock: boolean = false
 
+  /** 对外统一入口：开发时可走 Mock，演示或联调时可直接切到真实接口。 */
   async callLLM(prompt: string): Promise<string> {
     if (this.useMock) {
       return this.mockResponse(prompt)
@@ -47,6 +49,7 @@ export class LLMService {
     return this.realAPICall(prompt)
   }
 
+  /** 允许在页面初始化时替换成别的模型服务地址、Key 和模型名。 */
   setAPIConfig(url: string, key: string, model: string): void {
     this.apiUrl = url
     this.apiKey = key
@@ -76,7 +79,7 @@ export class LLMService {
       }
     ]
 
-    // 【修改点1】移除了 response_format 字段，避免部分代理网关报 HTTP 400 错误
+    // 这里不强依赖 response_format，尽量兼容不同代理网关和模型服务实现。
     const requestPayload: APIRequestPayload = {
       model: this.model,
       temperature: 0.4,
@@ -88,7 +91,7 @@ export class LLMService {
       'Authorization': `Bearer ${this.apiKey}`
     }
 
-    // 【修改点2】将超时时间均提升至 60000 毫秒 (60秒)，防止大模型回复稍慢时直接降级
+    // 超时时间设得稍长一些，避免课堂环境网络波动时过早降级。
     const httpRequestOptions: http.HttpRequestOptions = {
       method: http.RequestMethod.POST,
       header: requestHeader,
@@ -168,7 +171,7 @@ export class LLMService {
     })
   }
 
-  // 【修改点3】精准提取用户输入的内容，排除掉组装 Prompt 时添加的格式要求文字
+  /** 从完整 Prompt 中提取出“用户最新输入”，供降级模式做本地规则判断。 */
   private extractLatestUserInput(prompt: string): string {
     const startMarker: string = '【用户最新输入】'
     const endMarker: string = '【返回格式要求】'

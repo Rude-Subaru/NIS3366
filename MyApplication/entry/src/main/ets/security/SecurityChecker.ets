@@ -36,6 +36,7 @@ type FlexibleValue = string | number | boolean | object | object[] | null | unde
 export class SecurityChecker {
   private readonly MAX_CONTENT_LENGTH: number = 10000
 
+  // 只允许项目当前真正支持的动作进入后续流程。
   private allowedActions: string[] = [
     'chat',
     'schedule',
@@ -107,6 +108,7 @@ export class SecurityChecker {
   ]
 
   // 这些动作合法，但必须由用户二次确认。
+  // 当前主页面主要对 schedule 做确认弹窗，其余动作预留给后续扩展。
   private sensitiveActions: string[] = [
     'schedule',
     'delete',
@@ -178,6 +180,7 @@ export class SecurityChecker {
       return result
     }
 
+    // 审核时不只看 reply，也会把 data / title / event 等字段拼起来一起检查。
     const reviewText = this.collectReviewText(parsed)
     const keywordReason = this.findUnsafeKeyword(reviewText, action)
     if (keywordReason.length > 0) {

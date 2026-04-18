@@ -44,6 +44,7 @@ export interface ActionResult {
   errorMessage?: string
 }
 
+/** 模型原始 JSON 在进入业务层前的中间表示。 */
 interface ParsedActionPayload {
   action?: FlexibleValue
   reply?: FlexibleValue
@@ -96,6 +97,7 @@ export class WriteExecutor {
         }
 
         case 'schedule': {
+          // 日程动作要求输出可直接展示、可直接保存的结构化文本，避免页面层再拼装。
           const scheduleContent = rawData.length > 0 ? rawData : this.extractScheduleContentFromReply(reply)
           const scheduleDetail = this.parseScheduleDetail(scheduleContent.length > 0 ? scheduleContent : '新日程安排')
           const result: ActionResult = {
@@ -110,6 +112,7 @@ export class WriteExecutor {
         }
 
         case 'study': {
+          // 学习建议允许模型给一个主题，具体推荐内容由本地规则补齐，保证离线也能演示。
           const topic = rawData.length > 0 ? rawData : this.extractStudyTopic(reply)
           const recommendation = this.getStudyRecommendation(topic.length > 0 ? topic : '当前学习内容')
           const result: ActionResult = {
@@ -124,6 +127,7 @@ export class WriteExecutor {
         }
 
         case 'psych': {
+          // 心理辅导动作除了正常回复外，还会额外分析当前情绪等级与建议。
           const psychState = this.analyzePsychState(`${reply} ${rawData}`)
           const result: ActionResult = {
             action: 'psych',
@@ -200,6 +204,7 @@ export class WriteExecutor {
     const location = this.extractLocation(content)
     const event = this.extractEvent(content, location)
 
+    // 时间允许“只给日期”或“只给时段”，页面层会继续结合用户原话做补强。
     let extractedTime: string | null = null
     if (datePart || timePart) {
       const target = datePart ? datePart : this.startOfToday()
@@ -211,24 +216,28 @@ export class WriteExecutor {
       extractedTime = this.formatDateTime(target)
     }
 
-    const displayParts: string[] = [event.length > 0 ? event : content]
+    const normalizedEvent: string = event.length > 0 ? event : this.buildFallbackEvent(content, location)
+    const displayParts: string[] = [`详情：${normalizedEvent}`]
     if (extractedTime) {
-      displayParts.push(`时间：${extractedTime}`)
+      displayParts.push(`日期：${extractedTime.substring(0, 10)}`)
+      displayParts.push(`时间：${extractedTime.substring(11, 16)}`)
+    } else {
+      displayParts.push('日期：未设置')
+      displayParts.push('时间：未设置')
     }
-    if (location) {
-      displayParts.push(`地点：${location}`)
-    }
+    displayParts.push(`地点：${location ?? '未设置'}`)
 
-    const confidence = this.calculateScheduleConfidence(event, content, extractedTime, location)
+    // 置信度主要用于后续页面层判断是否需要更强的人工确认。
+    const confidence = this.calculateScheduleConfidence(normalizedEvent, content, extractedTime, location)
 
     return {
       rawContent: content,
-      event: event.length > 0 ? event : content,
+      event: normalizedEvent,
       extractedTime: extractedTime,
       extractedLocation: location,
       remindTime: extractedTime,
       confidence: confidence,
-      displayContent: displayParts.join('；')
+      displayContent: displayParts.join('\n')
     }
   }
 
@@ -663,8 +672,39 @@ export class WriteExecutor {
       event = event.replace(new RegExp(`去${this.escapeRegExp(location)}`, 'g'), '')
     }
 
-    event = event.replace(/[，。；,]/g, ' ').replace(/\s+/g, ' ').trim()
-    return event.length > 0 ? event : content
+    // 第二轮清洗专门兜底“我后天要去北京 -> 我要”这类经过时间剥离后残留的语气词。
+    event = event
+      .replace(/^(我|我们)/g, '')
+      .replace(/^(要|要去|准备|打算|计划|一下|一趟)/g, '')
+      .replace(/(一下|一趟)$/g, '')
+      .replace(/[，。；,]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    if (event === '要' || event === '我要' || event === '我想' || event === '去') {
+      return ''
+    }
+
+    return event.length > 0 ? event : ''
+  }
+
+  private buildFallbackEvent(content: string, location: string | null): string {
+    if (location !== null && location.length > 0) {
+      return `前往${location}`
+    }
+    if (content.indexOf('开会') >= 0 || content.indexOf('会议') >= 0) {
+      return '参加会议'
+    }
+    if (content.indexOf('上课') >= 0) {
+      return '参加课程'
+    }
+    if (content.indexOf('考试') >= 0) {
+      return '参加考试'
+    }
+    if (content.indexOf('看医生') >= 0) {
+      return '看医生'
+    }
+    return '待办事项'
   }
 
   private calculateScheduleConfidence(event: string, rawContent: string, extractedTime: string | null, location: string | null): number {
@@ -850,4 +890,8 @@ export class WriteExecutor {
     return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   }
 }
+
+
+
+
 

@@ -11,7 +11,6 @@ interface SystemInfo {
   deviceModel: string
 }
 
-
 /**
  * 读执行体 (同学B的核心任务2)
  * 负责采集系统信息和最近对话，组装给大模型的 Prompt (即 generatePrompt 逻辑)。
@@ -23,7 +22,7 @@ export class ReadExecutor {
     this.dbManager = dbManager
   }
 
-  // 构建发给大模型的最终 Prompt
+  // 构建发给大模型的最终 Prompt。这个入口只负责“读”和“拼”，不做业务决策。
   async buildPrompt(userInput: string): Promise<string> {
     const systemInfo: SystemInfo = this.getSystemInfo()
     const memory: string = await this.getMemory()
@@ -78,7 +77,10 @@ export class ReadExecutor {
     }).join('\n')
   }
 
-  /** 组装 Prompt：将系统状态、记忆和用户输入拼接成大模型能理解的格式 */
+  /**
+   * 组装 Prompt：将系统状态、短期记忆和用户输入统一组织成固定模板。
+   * 这样可以让模型既看到上下文，也更稳定地返回项目约定的 JSON。
+   */
   private assemblePrompt(systemInfo: SystemInfo, memory: string, userInput: string): string {
     return [
       '你是一个 AI 秘书，需要将用户输入归类为 chat、schedule、study、psych 四类之一。',

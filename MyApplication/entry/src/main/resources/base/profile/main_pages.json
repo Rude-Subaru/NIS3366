@@ -1,7 +1,9 @@
 {
   "src": [
     "pages/Login",
+    "pages/SessionSelect",
     "pages/Index",
+    "pages/PsychChat",
     "pages/ChatDetail"
   ]
 }

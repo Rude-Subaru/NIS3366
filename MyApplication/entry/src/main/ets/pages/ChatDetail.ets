@@ -18,6 +18,10 @@ class ChatMessage {
 
 @Entry
 @Component
+/**
+ * 历史聊天详情页。
+ * 这个页面目前是轻量展示页，复杂的 AI 处理仍然回到首页完成。
+ */
 struct ChatDetail {
   @State private messageList: ChatMessage[] = []
   @State private inputText: string = ''
@@ -27,6 +31,7 @@ struct ChatDetail {
   private readonly listScroller: Scroller = new Scroller()
   private readonly dbManager: DatabaseManager = new DatabaseManager()
 
+  /** 进入页面时读取最近消息，用于单独查看聊天记录。 */
   async aboutToAppear(): Promise<void> {
     const abilityContext: common.UIAbilityContext = getContext(this) as common.UIAbilityContext
     this.dbManager.setContext(abilityContext)
@@ -68,6 +73,7 @@ struct ChatDetail {
     }, 100)
   }
 
+  /** 这里保留一个简化交互入口，提醒用户真正的 AI 功能在首页。 */
   async sendMessage(): Promise<void> {
     const userInput: string = this.inputText.trim()
     if (userInput.length === 0 || this.isLoading || this.isInitializing) {

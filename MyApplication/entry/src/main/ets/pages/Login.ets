@@ -1,9 +1,13 @@
-import common from '@ohos.app.ability.common'
+﻿import common from '@ohos.app.ability.common'
 import { DatabaseManager } from '../database/DatabaseManager'
 import { router } from '@kit.ArkUI'
 
 @Entry
 @Component
+/**
+ * 登录/注册页。
+ * 这里只负责账号进入，不承载具体业务；登录成功后统一跳转到会话中心。
+ */
 struct Login {
   @State private username: string = ''
   @State private password: string = ''
@@ -14,15 +18,15 @@ struct Login {
 
   private readonly dbManager: DatabaseManager = new DatabaseManager()
 
+  /** 若本地已有登录态，则直接跳过登录页。 */
   async aboutToAppear(): Promise<void> {
     const abilityContext: common.UIAbilityContext = getContext(this) as common.UIAbilityContext
     this.dbManager.setContext(abilityContext)
     await this.dbManager.initDB()
 
-    // 如果已登录，直接跳转到首页
     const loggedIn: boolean = await this.dbManager.isLoggedIn()
     if (loggedIn) {
-      router.replaceUrl({ url: 'pages/Index' })
+      router.replaceUrl({ url: 'pages/SessionSelect' })
     }
   }
 
@@ -30,6 +34,7 @@ struct Login {
     await this.dbManager.closeDB()
   }
 
+  /** 页面内的基础输入校验，避免无效请求直接进入数据库层。 */
   private validateInput(): boolean {
     if (this.username.trim().length === 0) {
       this.errorMessage = '请输入用户名'
@@ -47,10 +52,12 @@ struct Login {
       this.errorMessage = '密码长度至少为4位'
       return false
     }
+
     this.errorMessage = ''
     return true
   }
 
+  /** 登录成功后进入会话中心，而不是直接进入某个具体业务页。 */
   async handleLogin(): Promise<void> {
     if (!this.validateInput()) {
       return
@@ -61,12 +68,13 @@ struct Login {
     this.isLoading = false
 
     if (result.success) {
-      router.replaceUrl({ url: 'pages/Index' })
+      router.replaceUrl({ url: 'pages/SessionSelect' })
     } else {
       this.errorMessage = result.message
     }
   }
 
+  /** 注册成功后会立即尝试登录，减少一次重复输入。 */
   async handleRegister(): Promise<void> {
     if (!this.validateInput()) {
       return
@@ -76,18 +84,17 @@ struct Login {
     const result = await this.dbManager.registerUser(this.username.trim(), this.password)
     this.isLoading = false
 
-    if (result.success) {
-      this.errorMessage = ''
-      // 注册成功后自动登录
-      const loginResult = await this.dbManager.loginUser(this.username.trim(), this.password)
-      if (loginResult.success) {
-        router.replaceUrl({ url: 'pages/Index' })
-      } else {
-        this.isRegisterMode = false
-        this.errorMessage = '注册成功，请登录'
-      }
-    } else {
+    if (!result.success) {
       this.errorMessage = result.message
+      return
+    }
+
+    const loginResult = await this.dbManager.loginUser(this.username.trim(), this.password)
+    if (loginResult.success) {
+      router.replaceUrl({ url: 'pages/SessionSelect' })
+    } else {
+      this.isRegisterMode = false
+      this.errorMessage = '注册成功，请重新登录。'
     }
   }
 
@@ -97,43 +104,37 @@ struct Login {
     this.confirmPassword = ''
   }
 
-  build() {
+  build(): void {
     Column({ space: 0 }) {
-      // 顶部装饰区域
       Column({ space: 8 }) {
-        Text('✦')
-          .fontSize(24)
-          .fontColor('rgba(255,255,255,0.6)')
         Text('AI 秘书')
-          .fontSize(28)
+          .fontSize(30)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
-        Text('你的智能生活助手')
-          .fontSize(14)
-          .fontColor('rgba(255,255,255,0.8)')
+        Text('登录后先选择会话，再进入不同功能场景')
+          .fontSize(13)
+          .fontColor('rgba(255,255,255,0.82)')
       }
       .width('100%')
-      .padding({ top: 60, bottom: 40 })
+      .padding({ top: 64, bottom: 42 })
       .alignItems(HorizontalAlign.Center)
       .linearGradient({
         direction: GradientDirection.Bottom,
-        colors: [['#1B4332', 0], ['#2D6A4F', 1]]
+        colors: [['#163B2E', 0], ['#2D6A4F', 0.65], ['#4A8F70', 1]]
       })
 
-      // 表单区域
-      Column({ space: 20 }) {
-        Text(this.isRegisterMode ? '注册账号' : '欢迎回来')
-          .fontSize(22)
+      Column({ space: 18 }) {
+        Text(this.isRegisterMode ? '创建账号' : '欢迎回来')
+          .fontSize(24)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#1E293B')
-          .margin({ top: 30, bottom: 10 })
+          .fontColor('#0F172A')
+          .margin({ top: 26, bottom: 8 })
 
-        // 用户名输入
         Column({ space: 6 }) {
           Text('用户名')
             .fontSize(13)
             .fontColor('#64748B')
-            .alignSelf(ItemAlign.Start)
+            .width('100%')
           TextInput({ placeholder: '请输入用户名', text: $$this.username })
             .width('100%')
             .height(48)
@@ -141,16 +142,14 @@ struct Login {
             .backgroundColor('#F8FAFC')
             .borderRadius(12)
             .padding({ left: 14, right: 14 })
-            .placeholderColor('#CBD5E1')
         }
         .width('100%')
 
-        // 密码输入
         Column({ space: 6 }) {
           Text('密码')
             .fontSize(13)
             .fontColor('#64748B')
-            .alignSelf(ItemAlign.Start)
+            .width('100%')
           TextInput({ placeholder: '请输入密码', text: $$this.password })
             .width('100%')
             .height(48)
@@ -159,17 +158,15 @@ struct Login {
             .backgroundColor('#F8FAFC')
             .borderRadius(12)
             .padding({ left: 14, right: 14 })
-            .placeholderColor('#CBD5E1')
         }
         .width('100%')
 
-        // 确认密码（仅注册时显示）
         if (this.isRegisterMode) {
           Column({ space: 6 }) {
             Text('确认密码')
               .fontSize(13)
               .fontColor('#64748B')
-              .alignSelf(ItemAlign.Start)
+              .width('100%')
             TextInput({ placeholder: '请再次输入密码', text: $$this.confirmPassword })
               .width('100%')
               .height(48)
@@ -178,26 +175,20 @@ struct Login {
               .backgroundColor('#F8FAFC')
               .borderRadius(12)
               .padding({ left: 14, right: 14 })
-              .placeholderColor('#CBD5E1')
           }
           .width('100%')
         }
 
-        // 错误提示
         if (this.errorMessage.length > 0) {
           Text(this.errorMessage)
-            .fontSize(12)
-            .fontColor('#EF4444')
             .width('100%')
-            .textAlign(TextAlign.Start)
+            .fontSize(12)
+            .fontColor('#DC2626')
         }
 
-        // 提交按钮
-        Button(this.isRegisterMode ? '注册' : '登录')
+        Button(this.isRegisterMode ? '注册并进入会话中心' : '登录并进入会话中心')
           .width('100%')
           .height(48)
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
           .backgroundColor('#2D6A4F')
           .fontColor('#FFFFFF')
           .borderRadius(12)
@@ -210,7 +201,6 @@ struct Login {
             }
           })
 
-        // 加载指示器
         if (this.isLoading) {
           LoadingProgress()
             .width(24)
@@ -218,7 +208,6 @@ struct Login {
             .color('#2D6A4F')
         }
 
-        // 切换模式
         Row({ space: 4 }) {
           Text(this.isRegisterMode ? '已有账号？' : '还没有账号？')
             .fontSize(13)
@@ -229,7 +218,6 @@ struct Login {
             .fontWeight(FontWeight.Medium)
             .onClick(() => this.toggleMode())
         }
-        .margin({ top: 10 })
       }
       .width('100%')
       .padding({ left: 28, right: 28 })

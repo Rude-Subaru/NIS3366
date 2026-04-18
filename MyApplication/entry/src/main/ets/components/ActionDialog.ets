@@ -7,12 +7,14 @@ export struct ActionDialog {
   @Prop isShow: boolean
   @Prop title: string
   @Prop content: string
+  // 回调由父页面注入，组件本身不持有任何业务状态。
   onConfirm: () => void = () => {}
   onCancel: () => void = () => {}
 
   build() {
     if (this.isShow) {
       Stack({ alignContent: Alignment.Center }) {
+        // 点击半透明遮罩等价于取消，符合移动端弹窗的常见交互。
         Column()
           .width('100%')
           .height('100%')
