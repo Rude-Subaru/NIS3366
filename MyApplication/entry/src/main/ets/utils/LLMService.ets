@@ -36,7 +36,7 @@ interface ActionResponsePayload {
  */
 export class LLMService {
   private apiUrl: string = 'https://models.sjtu.edu.cn/api/v1/chat/completions'
-  private apiKey: string = 'sk-4pAY_1zmiNPFg2ZDBI4aXA'
+  private apiKey: string = ''
   private model: string = 'glm-5'
   private useMock: boolean = false
 
