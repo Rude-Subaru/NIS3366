@@ -35,9 +35,9 @@ interface ActionResponsePayload {
  * 页面层只关心“给我一个字符串结果”，不需要知道网络请求细节。
  */
 export class LLMService {
-  private apiUrl: string = 'https://models.sjtu.edu.cn/api/v1/chat/completions'
-  private apiKey: string = ''
-  private model: string = 'glm-5'
+  private apiUrl: string = 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
+  private apiKey: string = 'API protection'
+  private model: string = 'glm-4-flash'
   private useMock: boolean = false
 
   /** 对外统一入口：开发时可走 Mock，演示或联调时可直接切到真实接口。 */
