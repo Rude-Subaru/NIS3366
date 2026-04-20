@@ -1,7 +1,7 @@
-﻿import relationalStore from '@ohos.data.relationalStore'
+import relationalStore from '@ohos.data.relationalStore'
 import common from '@ohos.app.ability.common'
 
-/** 聊天记录表对应的数据模型 */
+/** 聊天记录表对应的数据模型。 */
 export interface MessageRecord {
   id: number
   conversationId: number
@@ -10,7 +10,7 @@ export interface MessageRecord {
   timestamp: string
 }
 
-/** 日程表对应的数据模型 */
+/** 日程表对应的数据模型。 */
 export interface ScheduleRecord {
   id: number
   conversationId: number
@@ -20,7 +20,7 @@ export interface ScheduleRecord {
   isDone: boolean
 }
 
-/** 用户表对应的数据模型 */
+/** 用户表对应的数据模型。 */
 export interface UserRecord {
   id: number
   username: string
@@ -28,7 +28,7 @@ export interface UserRecord {
   createdTime: string
 }
 
-/** 会话表对应的数据模型 */
+/** 会话表对应的数据模型。 */
 export interface ConversationRecord {
   id: number
   userId: number
@@ -40,12 +40,14 @@ export interface ConversationRecord {
   lastMessage: string
 }
 
+/** 登录/注册结果。 */
 export interface AuthResult {
   success: boolean
   message: string
   userId?: number
 }
 
+/** 当前登录用户的基本信息。 */
 export interface UserInfo {
   userId: number
   username: string
@@ -186,6 +188,7 @@ export class DatabaseManager {
     }
   }
 
+  /** 读取指定会话的全部日程。 */
   async getAllSchedules(conversationId?: number): Promise<ScheduleRecord[]> {
     await this.ensureStoreReady()
     const predicates: relationalStore.RdbPredicates = new relationalStore.RdbPredicates('Schedules')
@@ -198,6 +201,7 @@ export class DatabaseManager {
     return this.readSchedules(resultSet)
   }
 
+  /** 把指定日程标记为已完成。 */
   async markScheduleDone(scheduleId: number): Promise<boolean> {
     await this.ensureStoreReady()
     const predicates: relationalStore.RdbPredicates = new relationalStore.RdbPredicates('Schedules')
@@ -207,6 +211,7 @@ export class DatabaseManager {
     return changedRows > 0
   }
 
+  /** 更新指定日程的内容和提醒时间。 */
   async updateSchedule(scheduleId: number, content: string, remindTime?: string): Promise<boolean> {
     await this.ensureStoreReady()
     const predicates: relationalStore.RdbPredicates = new relationalStore.RdbPredicates('Schedules')
@@ -219,6 +224,7 @@ export class DatabaseManager {
     return changedRows > 0
   }
 
+  /** 删除指定日程。 */
   async deleteSchedule(scheduleId: number): Promise<boolean> {
     await this.ensureStoreReady()
     const predicates: relationalStore.RdbPredicates = new relationalStore.RdbPredicates('Schedules')
@@ -227,6 +233,10 @@ export class DatabaseManager {
     return deletedRows > 0
   }
 
+  /**
+   * 创建新会话。
+   * 创建完成后自动设为当前会话。
+   */
   async createConversation(title: string, type: 'general' | 'psych' = 'general', parentConversationId: number = 0): Promise<ConversationRecord | null> {
     await this.ensureStoreReady()
     const currentUser = await this.getCurrentUser()
@@ -259,6 +269,7 @@ export class DatabaseManager {
     }
   }
 
+  /** 读取当前用户的所有会话，按最近更新时间倒序。 */
   async getConversations(): Promise<ConversationRecord[]> {
     await this.ensureStoreReady()
     const currentUser = await this.getCurrentUser()
@@ -272,6 +283,7 @@ export class DatabaseManager {
     return this.readConversations(resultSet)
   }
 
+  /** 根据 ID 读取单条会话。 */
   async getConversationById(conversationId: number): Promise<ConversationRecord | null> {
     await this.ensureStoreReady()
     const predicates: relationalStore.RdbPredicates = new relationalStore.RdbPredicates('Conversations')
@@ -281,7 +293,10 @@ export class DatabaseManager {
     return records.length > 0 ? records[0] : null
   }
 
-  /** 删除普通会话时会级联清理其心理辅导子会话及关联数据。 */
+  /**
+   * 删除普通会话时会级联清理其心理辅导子会话及关联数据。
+   * 删除后若当前会话被删，自动切换到剩余的第一个会话。
+   */
   async deleteConversation(conversationId: number): Promise<boolean> {
     await this.ensureStoreReady()
     const targetConversation: ConversationRecord | null = await this.getConversationById(conversationId)
@@ -335,6 +350,7 @@ export class DatabaseManager {
     return true
   }
 
+  /** 读取 AppSettings 中记录的当前会话 ID。 */
   async getCurrentConversation(): Promise<ConversationRecord | null> {
     await this.ensureStoreReady()
     const conversationIdStr: string | null = await this.getSetting('currentConversationId')
@@ -344,16 +360,19 @@ export class DatabaseManager {
     return this.getConversationById(Number(conversationIdStr))
   }
 
+  /** 把指定会话 ID 设为当前会话。 */
   async setCurrentConversation(conversationId: number): Promise<void> {
     await this.ensureStoreReady()
     await this.setSetting('currentConversationId', `${conversationId}`)
   }
 
+  /** 清除当前会话标记。 */
   async clearCurrentConversation(): Promise<void> {
     await this.ensureStoreReady()
     await this.deleteSetting('currentConversationId')
   }
 
+  /** 若当前无会话，自动创建一条默认会话。 */
   async ensureDefaultConversation(): Promise<ConversationRecord | null> {
     await this.ensureStoreReady()
     const currentConversation = await this.getCurrentConversation()
@@ -370,6 +389,10 @@ export class DatabaseManager {
     return this.createConversation('新对话 1', 'general')
   }
 
+  /**
+   * 获取或创建与指定普通会话关联的心理辅导子会话。
+   * 每个普通会话最多对应一个心理辅导子会话。
+   */
   async getOrCreatePsychConversation(sourceConversationId?: number): Promise<ConversationRecord | null> {
     await this.ensureStoreReady()
     const currentUser = await this.getCurrentUser()
@@ -398,6 +421,7 @@ export class DatabaseManager {
     return this.createConversation(title, 'psych', parentConversationId)
   }
 
+  /** 注册新用户，用户名不可重复。 */
   async registerUser(username: string, password: string): Promise<AuthResult> {
     await this.ensureStoreReady()
     const exists: boolean = await this.userExists(username)
@@ -421,6 +445,7 @@ export class DatabaseManager {
     }
   }
 
+  /** 验证用户名密码并设置登录态。 */
   async loginUser(username: string, password: string): Promise<AuthResult> {
     await this.ensureStoreReady()
     const predicates: relationalStore.RdbPredicates = new relationalStore.RdbPredicates('Users')
@@ -459,6 +484,7 @@ export class DatabaseManager {
     }
   }
 
+  /** 退出登录，清除所有本地登录态和当前会话标记。 */
   async logout(): Promise<void> {
     await this.ensureStoreReady()
     await this.deleteSetting('currentConversationId')
@@ -466,6 +492,7 @@ export class DatabaseManager {
     await this.deleteSetting('currentUsername')
   }
 
+  /** 读取当前登录用户。 */
   async getCurrentUser(): Promise<UserInfo | null> {
     await this.ensureStoreReady()
     const userIdStr: string | null = await this.getSetting('currentUserId')
@@ -480,11 +507,13 @@ export class DatabaseManager {
     }
   }
 
+  /** 判断当前是否有登录态。 */
   async isLoggedIn(): Promise<boolean> {
     const user = await this.getCurrentUser()
     return user !== null
   }
 
+  /** 关闭数据库连接并重置初始化标记。 */
   async closeDB(): Promise<boolean> {
     if (DatabaseManager.store !== null) {
       try {
@@ -498,6 +527,7 @@ export class DatabaseManager {
     return true
   }
 
+  /** 确保数据库已初始化，未初始化时抛出异常。 */
   private async ensureStoreReady(): Promise<void> {
     const ready: boolean = await this.initDB()
     if (!ready || DatabaseManager.store === null) {
@@ -505,6 +535,7 @@ export class DatabaseManager {
     }
   }
 
+  /** 安全添加列：已存在时静默忽略，保证老数据库平滑升级。 */
   private async safeAddColumn(store: relationalStore.RdbStore, tableName: string, columnSql: string): Promise<void> {
     try {
       await store.executeSql(`ALTER TABLE ${tableName} ADD COLUMN ${columnSql}`)
@@ -513,6 +544,10 @@ export class DatabaseManager {
     }
   }
 
+  /**
+   * 解析 conversationId 参数。
+   * 未传入时尝试取当前会话；autoCreate 为 true 时会自动创建默认会话兜底。
+   */
   private async resolveConversationId(conversationId?: number, autoCreate: boolean = true): Promise<number> {
     if (conversationId !== undefined && conversationId > 0) {
       return conversationId
@@ -531,6 +566,10 @@ export class DatabaseManager {
     return createdConversation !== null ? createdConversation.id : 0
   }
 
+  /**
+   * 更新会话的最近活跃时间和预览内容。
+   * 用户消息还会触发智能标题生成。
+   */
   private async updateConversationActivity(conversationId: number, content: string, isUser: boolean): Promise<void> {
     const predicates: relationalStore.RdbPredicates = new relationalStore.RdbPredicates('Conversations')
     predicates.equalTo('id', conversationId)
@@ -552,6 +591,11 @@ export class DatabaseManager {
     await (DatabaseManager.store as relationalStore.RdbStore).update(valueBucket, predicates)
   }
 
+  /**
+   * 根据用户输入内容自动生成会话标题。
+   * 普通会话采用“分类标签 + 关键短语”格式；
+   * 心理会话采用“心理：标签 + 关键短语”格式。
+   */
   private generateConversationTitle(content: string, type: 'general' | 'psych'): string {
     const normalized: string = this.normalizeConversationText(content)
     const sanitized: string = this.removeTitleNoise(normalized)
@@ -565,6 +609,7 @@ export class DatabaseManager {
     return this.combineTitle(label, phrase, false)
   }
 
+  /** 标题生成前的文本归一化：转小写、去标点、去多余空格。 */
   private normalizeConversationText(content: string): string {
     return content
       .toLowerCase()
@@ -574,6 +619,7 @@ export class DatabaseManager {
       .trim()
   }
 
+  /** 普通会话的分类标签检测。 */
   private detectGeneralLabel(content: string): string {
     if (content.length === 0) {
       return '日常对话'
@@ -599,6 +645,7 @@ export class DatabaseManager {
     return '日常对话'
   }
 
+  /** 心理辅导会话的分类标签检测。 */
   private detectPsychLabel(content: string): string {
     if (this.containsKeyword(content, ['焦虑', '压力', '紧张', '失眠', '害怕', '崩溃'])) {
       return '压力调节'
@@ -612,6 +659,7 @@ export class DatabaseManager {
     return '情绪支持'
   }
 
+  /** 从内容中提取标题短语，优先取时间 + 动作/事件组合。 */
   private extractTitlePhrase(content: string, type: 'general' | 'psych'): string {
     if (type === 'psych') {
       return this.extractPsychPhrase(content)
@@ -619,6 +667,7 @@ export class DatabaseManager {
     return this.extractGeneralPhrase(content)
   }
 
+  /** 普通会话的短语提取。 */
   private extractGeneralPhrase(content: string): string {
     const timePhrase: string = this.extractTimePhrase(content)
     const actionPhrase: string = this.extractActionPhrase(content)
@@ -647,6 +696,7 @@ export class DatabaseManager {
     return ''
   }
 
+  /** 心理辅导会话的短语提取。 */
   private extractPsychPhrase(content: string): string {
     const topicPhrase: string = this.extractKeywordPhrase(content, ['失眠', '焦虑', '压力', '紧张', '低落', '委屈', '分手', '孤独', '吵架', '矛盾', '家人', '朋友', '同事', '同学'])
     if (topicPhrase.length > 0) {
@@ -659,6 +709,7 @@ export class DatabaseManager {
     return ''
   }
 
+  /** 从内容中提取时间短语，如“明天下午三点”。 */
   private extractTimePhrase(content: string): string {
     const matches: RegExpMatchArray | null = content.match(/((今天|明天|后天|周一|周二|周三|周四|周五|周六|周日)?(上午|中午|下午|晚上)?(\d+点半|\d+点)?)/)
     if (matches === null || matches.length === 0) {
@@ -668,6 +719,7 @@ export class DatabaseManager {
     return value.length > 1 ? value : ''
   }
 
+  /** 从内容中提取动作短语，如“去图书馆”、“开会”。 */
   private extractActionPhrase(content: string): string {
     const goMatch: RegExpMatchArray | null = content.match(/去[一-龥a-z0-9]{1,6}/)
     if (goMatch !== null && goMatch.length > 0) {
@@ -680,6 +732,7 @@ export class DatabaseManager {
     return ''
   }
 
+  /** 从关键词列表中找出内容里第一个命中的词。 */
   private extractKeywordPhrase(content: string, keywords: string[]): string {
     for (let index = 0; index < keywords.length; index++) {
       if (content.indexOf(keywords[index]) >= 0) {
@@ -689,6 +742,7 @@ export class DatabaseManager {
     return ''
   }
 
+  /** 截断标题短语，防止过长。 */
   private trimTitlePhrase(phrase: string): string {
     const compact: string = phrase.replace(/\s+/g, '')
     if (compact.length > 8) {
@@ -697,10 +751,12 @@ export class DatabaseManager {
     return compact
   }
 
+  /** 判断内容中是否包含时间相关表达。 */
   private containsTimeExpression(content: string): boolean {
     return /(今天|明天|后天|周一|周二|周三|周四|周五|周六|周日|上午|中午|下午|晚上|\d+点半|\d+点|\d+月\d+日)/.test(content)
   }
 
+  /** 把标签和短语组合成最终标题。 */
   private combineTitle(label: string, phrase: string, isPsych: boolean): string {
     const prefix: string = isPsych ? '心理：' : ''
     if (phrase.length === 0) {
@@ -712,6 +768,7 @@ export class DatabaseManager {
     return `${prefix}${label}·${phrase}`
   }
 
+  /** 去除标题生成中的语气词和敏感词噪声。 */
   private removeTitleNoise(content: string): string {
     return content
       .replace(/帮我|请帮我|我想|我希望|需要|想要|一下|可以|请问|然后|就是|麻烦|是否|怎么|怎样|关于|有关/g, ' ')
@@ -720,6 +777,7 @@ export class DatabaseManager {
       .trim()
   }
 
+  /** 判断内容中是否包含任意一个关键词。 */
   private containsKeyword(content: string, keywords: string[]): boolean {
     for (let index = 0; index < keywords.length; index++) {
       if (content.indexOf(keywords[index]) >= 0) {
@@ -729,6 +787,7 @@ export class DatabaseManager {
     return false
   }
 
+  /** 根据来源普通会话的标题，生成心理辅导子会话的标题。 */
   private buildPsychConversationTitle(sourceConversation: ConversationRecord | null): string {
     if (sourceConversation === null) {
       return '心理：情绪支持'
@@ -741,6 +800,7 @@ export class DatabaseManager {
     return `心理：${sourceTitle}`
   }
 
+  /** 清洗已存储的标题，空值或敏感内容时回退到默认标题。 */
   private sanitizeStoredTitle(title: string, type: 'general' | 'psych'): string {
     const normalized: string = this.normalizeConversationText(title)
     if (normalized.length === 0) {
@@ -753,6 +813,7 @@ export class DatabaseManager {
     return title
   }
 
+  /** 判断用户名是否已存在。 */
   private async userExists(username: string): Promise<boolean> {
     const predicates: relationalStore.RdbPredicates = new relationalStore.RdbPredicates('Users')
     predicates.equalTo('username', username)
@@ -767,6 +828,7 @@ export class DatabaseManager {
     }
   }
 
+  /** 写入或更新一条应用设置。 */
   private async setSetting(key: string, value: string): Promise<void> {
     const predicates: relationalStore.RdbPredicates = new relationalStore.RdbPredicates('AppSettings')
     predicates.equalTo('key', key)
@@ -777,6 +839,7 @@ export class DatabaseManager {
     }
   }
 
+  /** 读取一条应用设置。 */
   private async getSetting(key: string): Promise<string | null> {
     const predicates: relationalStore.RdbPredicates = new relationalStore.RdbPredicates('AppSettings')
     predicates.equalTo('key', key)
@@ -791,12 +854,14 @@ export class DatabaseManager {
     return value
   }
 
+  /** 删除一条应用设置。 */
   private async deleteSetting(key: string): Promise<void> {
     const predicates: relationalStore.RdbPredicates = new relationalStore.RdbPredicates('AppSettings')
     predicates.equalTo('key', key)
     await (DatabaseManager.store as relationalStore.RdbStore).delete(predicates)
   }
 
+  /** 把 Messages 查询结果集解析为数组。 */
   private readMessages(resultSet: relationalStore.ResultSet): MessageRecord[] {
     const records: MessageRecord[] = []
     if (resultSet.rowCount === 0) {
@@ -826,6 +891,7 @@ export class DatabaseManager {
     return records
   }
 
+  /** 把 Schedules 查询结果集解析为数组。 */
   private readSchedules(resultSet: relationalStore.ResultSet): ScheduleRecord[] {
     const records: ScheduleRecord[] = []
     if (resultSet.rowCount === 0) {
@@ -857,6 +923,7 @@ export class DatabaseManager {
     return records
   }
 
+  /** 把 Conversations 查询结果集解析为数组，同时进行标题清洗。 */
   private readConversations(resultSet: relationalStore.ResultSet): ConversationRecord[] {
     const records: ConversationRecord[] = []
     if (resultSet.rowCount === 0) {
@@ -893,13 +960,3 @@ export class DatabaseManager {
     return records
   }
 }
-
-
-
-
-
-
-
-
-
-

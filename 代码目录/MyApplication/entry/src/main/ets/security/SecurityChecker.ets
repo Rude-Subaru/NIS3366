@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 安全检查模块
  * 负责：在写执行体解析前，对大模型返回内容做结构和内容安全校验。
  *
@@ -9,6 +9,7 @@
  * 4. 标记敏感操作，由主页面做二次确认。
  */
 
+/** 安全检查结果。 */
 export interface SecurityCheckResult {
   safe: boolean
   reason?: string
@@ -16,11 +17,13 @@ export interface SecurityCheckResult {
   needsConfirmation?: boolean
 }
 
+/** 内容审查结果。 */
 interface ContentReviewResult {
   safe: boolean
   reason?: string
 }
 
+/** 安全检查用的 JSON 中间表示。 */
 interface ParsedSecurityPayload {
   action?: FlexibleValue
   reply?: FlexibleValue
@@ -238,16 +241,12 @@ export class SecurityChecker {
     return result
   }
 
-  /**
-   * 检查是否为敏感操作（需要用户确认）。
-   */
+  /** 检查是否为敏感操作（需要用户确认）。 */
   needsConfirmation(action: string): boolean {
     return this.sensitiveActions.includes(this.normalizeAction(action))
   }
 
-  /**
-   * 添加危险关键词。
-   */
+  /** 动态添加危险关键词。 */
   addDangerousKeyword(keyword: string): void {
     const normalized = this.normalizeString(keyword)
     if (normalized.length > 0 && !this.dangerousKeywords.includes(normalized)) {
@@ -255,9 +254,7 @@ export class SecurityChecker {
     }
   }
 
-  /**
-   * 设置敏感操作列表。
-   */
+  /** 设置敏感操作列表。 */
   setSensitiveActions(actions: string[]): void {
     this.sensitiveActions = actions
       .map((action: string): string => this.normalizeAction(action))
@@ -294,6 +291,7 @@ export class SecurityChecker {
     return result
   }
 
+  /** 扫描内容中的危险/有害/隐私关键词。 */
   private findUnsafeKeyword(content: string, action: string): string {
     const lowerContent = content.toLowerCase()
 
@@ -321,6 +319,7 @@ export class SecurityChecker {
     return ''
   }
 
+  /** 判断内容是否包含隐私风险意图动词。 */
   private hasPrivacyRiskIntent(content: string): boolean {
     for (const verb of this.privacyRiskVerbs) {
       if (content.includes(verb.toLowerCase())) {
@@ -330,6 +329,7 @@ export class SecurityChecker {
     return false
   }
 
+  /** 判断内容是否包含提示词注入特征。 */
   private containsPromptInjection(content: string): boolean {
     const lowerContent = content.toLowerCase()
     for (const keyword of this.promptInjectionKeywords) {
@@ -340,6 +340,7 @@ export class SecurityChecker {
     return false
   }
 
+  /** 判断心理内容是否为支持性表述（避免误拦截危机干预内容）。 */
   private isSupportivePsychContent(content: string): boolean {
     const supportWords: string[] = ['联系', '求助', '专业', '帮助', '热线', '不要伤害', '安全']
     for (const word of supportWords) {
@@ -350,6 +351,7 @@ export class SecurityChecker {
     return false
   }
 
+  /** 把 JSON 各字段拼成一段审查文本。 */
   private collectReviewText(parsed: ParsedSecurityPayload): string {
     const parts: string[] = []
     parts.push(this.normalizeString(parsed.action))
@@ -362,10 +364,12 @@ export class SecurityChecker {
     return parts.filter((item: string): boolean => item.length > 0).join('\n')
   }
 
+  /** 动作名归一化。 */
   private normalizeAction(action: FlexibleValue): string {
     return this.normalizeString(action).trim().toLowerCase()
   }
 
+  /** 把任意值归一化为字符串。 */
   private normalizeString(value: FlexibleValue): string {
     if (value === undefined || value === null) {
       return ''
@@ -383,6 +387,7 @@ export class SecurityChecker {
     }
   }
 
+  /** 从文本中提取 JSON，支持代码块包裹和纯文本中提取。 */
   private extractJSON(text: string): ParsedSecurityPayload {
     try {
       return JSON.parse(text) as ParsedSecurityPayload
@@ -397,6 +402,7 @@ export class SecurityChecker {
     }
   }
 
+  /** 状态机扫描文本，找出第一段合法 JSON 对象。 */
   private findFirstJSONObject(text: string): string {
     let start = -1
     let depth = 0

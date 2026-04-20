@@ -40,7 +40,7 @@ interface ActionResponsePayload {
  */
 export class LLMService {
   private apiUrl: string = 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
-  private apiKey: string = '679c720f28db44d1ad3e2a3cc9367529.zeSW3MHUX2vTJJ7q'
+  private apiKey: string = 'API protect'
   private model: string = 'glm-4-flash'
   private useMock: boolean = false
 
