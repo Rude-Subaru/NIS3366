@@ -1,4 +1,4 @@
-﻿import common from '@ohos.app.ability.common'
+import common from '@ohos.app.ability.common'
 import { router } from '@kit.ArkUI'
 import { ConversationRecord, DatabaseManager, MessageRecord } from '../database/DatabaseManager'
 import { ReadExecutor } from '../executors/ReadExecutor'
@@ -6,6 +6,7 @@ import { WriteExecutor, ActionResult } from '../executors/WriteExecutor'
 import { SecurityChecker } from '../security/SecurityChecker'
 import { LLMService } from '../utils/LLMService'
 
+/** 页面内使用的消息结构体。 */
 class ChatMessage {
   id: number
   content: string
@@ -20,12 +21,12 @@ class ChatMessage {
   }
 }
 
-@Entry
-@Component
 /**
  * 心理辅导独立页面。
  * 这里和普通会话分开存储，避免日常助理内容与情绪支持内容混在一起。
  */
+@Entry
+@Component
 struct PsychChat {
   @State private messageList: ChatMessage[] = []
   @State private inputText: string = ''
@@ -62,10 +63,12 @@ struct PsychChat {
     this.isInitializing = false
   }
 
+  /** 离开页面时关闭数据库连接。 */
   async aboutToDisappear(): Promise<void> {
     await this.dbManager.closeDB()
   }
 
+  /** 从数据库加载当前心理辅导会话的历史消息。 */
   private async loadHistoryMessages(): Promise<void> {
     const history: MessageRecord[] = await this.dbManager.getRecentMessages(100, this.currentConversationId)
     this.messageList = history.map((msg: MessageRecord): ChatMessage => {
@@ -74,11 +77,13 @@ struct PsychChat {
     this.scrollToBottom()
   }
 
+  /** 把时间戳格式化为 HH:mm。 */
   private formatTime(timestamp: string): string {
     const date: Date = new Date(timestamp)
     return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   }
 
+  /** 保存消息到数据库并刷新列表。 */
   private async addMessage(content: string, isUser: boolean): Promise<void> {
     const record: MessageRecord = await this.dbManager.saveMessage(content, isUser, this.currentConversationId)
     this.messageList = [...this.messageList, new ChatMessage(record.id, record.content, record.isUser, this.formatTime(record.timestamp))]
@@ -91,13 +96,17 @@ struct PsychChat {
     this.scrollToBottom()
   }
 
+  /** 滚动到底部，保证新消息可见。 */
   private scrollToBottom(): void {
     setTimeout((): void => {
       this.listScroller.scrollEdge(Edge.Bottom)
     }, 100)
   }
 
-  /** 心理辅导页仍然复用同一套读/写执行体，但会额外强化“温和回应”的提示。 */
+  /**
+   * 心理辅导页仍然复用同一套读/写执行体，但会额外强化“温和回应”的提示。
+   * 安全拦截时返回更柔和的兜底文案。
+   */
   async sendMessage(): Promise<void> {
     const userInput: string = this.inputText.trim()
     if (userInput.length === 0 || this.isLoading || this.isInitializing) {
@@ -140,8 +149,8 @@ struct PsychChat {
     }
   }
 
-  @Builder
   /** 心理辅导页单独使用不同配色，方便用户与普通会话做区分。 */
+  @Builder
   private MessageItemBuilder(message: ChatMessage): void {
     Row() {
       if (!message.isUser) {
@@ -292,8 +301,3 @@ struct PsychChat {
     .backgroundColor('#F5F3FF')
   }
 }
-
-
-
-
-

@@ -1,10 +1,12 @@
-﻿import http from '@ohos.net.http'
+import http from '@ohos.net.http'
 
+/** 对话消息结构。 */
 interface ChatMessagePayload {
   role: string
   content: string
 }
 
+/** 模型返回的选择项。 */
 interface LLMChoiceMessage {
   content: string
 }
@@ -17,12 +19,14 @@ interface LLMResponsePayload {
   choices: LLMChoice[]
 }
 
+/** API 请求体。 */
 interface APIRequestPayload {
   model: string
   temperature: number
   messages: ChatMessagePayload[]
 }
 
+/** Mock 模式下返回的固定动作结构。 */
 interface ActionResponsePayload {
   action: string
   reply: string
@@ -57,10 +61,12 @@ export class LLMService {
     this.useMock = false
   }
 
+  /** 切换 Mock 模式，方便离线演示。 */
   setMockMode(useMock: boolean): void {
     this.useMock = useMock
   }
 
+  /** 真实网络请求：调用大模型 API，异常时自动降级到 Mock。 */
   private async realAPICall(prompt: string): Promise<string> {
     const request = http.createHttp()
 
@@ -123,6 +129,7 @@ export class LLMService {
     }
   }
 
+  /** 本地降级响应：按关键词匹配返回固定 JSON，不依赖网络。 */
   private mockResponse(prompt: string): Promise<string> {
     const userInput: string = this.extractLatestUserInput(prompt)
     const normalized: string = userInput.toLowerCase()
@@ -195,6 +202,7 @@ export class LLMService {
     return contentAfterStart.trim()
   }
 
+  /** 判断文本中是否包含任意一个关键词。 */
   private containsAny(text: string, keywords: string[]): boolean {
     return keywords.some((keyword: string): boolean => text.includes(keyword.toLowerCase()))
   }

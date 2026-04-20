@@ -2,6 +2,7 @@ import common from '@ohos.app.ability.common'
 import { DatabaseManager, MessageRecord } from '../database/DatabaseManager'
 import { router } from '@kit.ArkUI'
 
+/** 页面内使用的消息结构体。 */
 class ChatMessage {
   id: number
   content: string
@@ -16,12 +17,12 @@ class ChatMessage {
   }
 }
 
-@Entry
-@Component
 /**
  * 历史聊天详情页。
  * 这个页面目前是轻量展示页，复杂的 AI 处理仍然回到首页完成。
  */
+@Entry
+@Component
 struct ChatDetail {
   @State private messageList: ChatMessage[] = []
   @State private inputText: string = ''
@@ -40,10 +41,12 @@ struct ChatDetail {
     this.isInitializing = false
   }
 
+  /** 离开页面时关闭数据库连接。 */
   async aboutToDisappear(): Promise<void> {
     await this.dbManager.closeDB()
   }
 
+  /** 从数据库加载最近 100 条历史消息。 */
   private async loadHistoryMessages(): Promise<void> {
     const history: MessageRecord[] = await this.dbManager.getRecentMessages(100)
     this.messageList = history.map((msg: MessageRecord): ChatMessage => {
@@ -52,6 +55,7 @@ struct ChatDetail {
     this.scrollToBottom()
   }
 
+  /** 把时间戳格式化为 HH:mm。 */
   private formatTime(timestamp: string): string {
     const date: Date = new Date(timestamp)
     return date.toLocaleTimeString('zh-CN', {
@@ -60,6 +64,7 @@ struct ChatDetail {
     })
   }
 
+  /** 保存消息到数据库并刷新列表。 */
   private async addMessage(content: string, isUser: boolean): Promise<void> {
     const record: MessageRecord = await this.dbManager.saveMessage(content, isUser)
     const newMessage: ChatMessage = new ChatMessage(record.id, record.content, record.isUser, this.formatTime(record.timestamp))
@@ -67,13 +72,17 @@ struct ChatDetail {
     this.scrollToBottom()
   }
 
+  /** 滚动到底部，保证新消息可见。 */
   private scrollToBottom(): void {
     setTimeout((): void => {
       this.listScroller.scrollEdge(Edge.Bottom)
     }, 100)
   }
 
-  /** 这里保留一个简化交互入口，提醒用户真正的 AI 功能在首页。 */
+  /**
+   * 这里保留一个简化交互入口，提醒用户真正的 AI 功能在首页。
+   * 输入后仅做本地回显，不调用大模型。
+   */
   async sendMessage(): Promise<void> {
     const userInput: string = this.inputText.trim()
     if (userInput.length === 0 || this.isLoading || this.isInitializing) {
@@ -95,6 +104,7 @@ struct ChatDetail {
     }
   }
 
+  /** 聊天气泡旁的头像构建器。 */
   @Builder
   private AvatarBuilder(label: string, colors: string[]): void {
     Column() {
@@ -114,6 +124,7 @@ struct ChatDetail {
     .shadow({ radius: 4, color: 'rgba(0,0,0,0.12)', offsetX: 0, offsetY: 2 })
   }
 
+  /** 单条消息的完整布局构建器。 */
   @Builder
   private MessageItemBuilder(message: ChatMessage): void {
     Row() {

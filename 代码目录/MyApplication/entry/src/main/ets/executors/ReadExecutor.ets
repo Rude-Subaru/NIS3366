@@ -1,7 +1,8 @@
-﻿import { DatabaseManager, MessageRecord } from '../database/DatabaseManager'
+import { DatabaseManager, MessageRecord } from '../database/DatabaseManager'
 import batteryInfo from '@ohos.batteryInfo'
 import deviceInfo from '@ohos.deviceInfo'
 
+/** 采集到的系统上下文信息。 */
 interface SystemInfo {
   currentTime: string
   date: string
@@ -12,8 +13,8 @@ interface SystemInfo {
 }
 
 /**
- * 读执行体 (同学B的核心任务2)
- * 负责采集系统信息和最近对话，组装给大模型的 Prompt (即 generatePrompt 逻辑)。
+ * 读执行体。
+ * 负责采集系统信息和最近对话，组装给大模型的 Prompt。
  */
 export class ReadExecutor {
   private dbManager: DatabaseManager
@@ -22,19 +23,22 @@ export class ReadExecutor {
     this.dbManager = dbManager
   }
 
-  // 构建发给大模型的最终 Prompt。这个入口只负责“读”和“拼”，不做业务决策。
+  /**
+   * 构建发给大模型的最终 Prompt。
+   * 这个入口只负责“读”和“拼”，不做业务决策。
+   */
   async buildPrompt(userInput: string): Promise<string> {
     const systemInfo: SystemInfo = this.getSystemInfo()
     const memory: string = await this.getMemory()
     return this.assemblePrompt(systemInfo, memory, userInput)
   }
 
-  /** 获取系统上下文（包含时间、设备型号和电量） */
+  /** 获取系统上下文（包含时间、设备型号和电量）。 */
   private getSystemInfo(): SystemInfo {
     const now = new Date()
     const weekdays: string[] = ['日', '一', '二', '三', '四', '五', '六']
 
-    // 获取系统电量 (为了防止在某些模拟器上报错，加上try-catch保护)
+    // 获取系统电量，模拟器上可能报错，加上 try-catch 保护。
     let batterySOC = 100
     try {
       batterySOC = batteryInfo.batterySOC
@@ -42,7 +46,7 @@ export class ReadExecutor {
       console.warn('获取电量失败，使用默认值100')
     }
 
-    // 获取设备型号
+    // 获取设备型号，失败时回退到通用名称。
     let model = 'HarmonyOS Device'
     try {
       model = deviceInfo.marketName || deviceInfo.productModel || 'Unknown Device'
@@ -60,7 +64,7 @@ export class ReadExecutor {
     }
   }
 
-  /** 获取最近 5 条消息作为大模型的短期记忆 */
+  /** 获取最近 5 条消息作为大模型的短期记忆。 */
   private async getMemory(): Promise<string> {
     const messages: MessageRecord[] = await this.dbManager.getRecentMessages(5)
     if (messages.length === 0) {

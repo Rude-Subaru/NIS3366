@@ -1,13 +1,14 @@
 /**
  * 执行确认弹窗。
  * 用于日程添加等需要用户二次确认的动作。
+ * 回调由父页面注入，组件本身不持有任何业务状态。
  */
 @Component
 export struct ActionDialog {
   @Prop isShow: boolean
   @Prop title: string
   @Prop content: string
-  // 回调由父页面注入，组件本身不持有任何业务状态。
+
   onConfirm: () => void = () => {}
   onCancel: () => void = () => {}
 

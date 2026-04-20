@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 写执行体
  * 负责：解析大模型返回的JSON，并把不同Action整理成主页面可执行的数据。
  *
@@ -8,6 +8,7 @@
  * 3. 扩展信息放在 scheduleDetail / studyRecommendation / psychState 中。
  */
 
+/** 日程解析后的结构化详情。 */
 export interface ScheduleDetail {
   rawContent: string
   event: string
@@ -18,6 +19,7 @@ export interface ScheduleDetail {
   displayContent: string
 }
 
+/** 学习推荐的结构化数据。 */
 export interface StudyRecommendation {
   topic: string
   difficulty: string
@@ -26,12 +28,14 @@ export interface StudyRecommendation {
   plan: string[]
 }
 
+/** 心理状态分析结果。 */
 export interface PsychState {
   level: 'low' | 'medium' | 'high'
   keywords: string[]
   suggestion: string
 }
 
+/** 动作解析后的统一结果。 */
 export interface ActionResult {
   action: 'chat' | 'schedule' | 'study' | 'psych' | 'unknown'
   reply: string
@@ -314,6 +318,7 @@ export class WriteExecutor {
     return true
   }
 
+  /** 构造通用的 chat 降级结果。 */
   private createChatFallback(reply: string, reason: string): ActionResult {
     const result: ActionResult = {
       action: 'chat',
@@ -324,6 +329,7 @@ export class WriteExecutor {
     return result
   }
 
+  /** 从文本中提取 JSON，支持代码块包裹和纯文本中提取。 */
   private extractJSON(text: string): ParsedActionPayload {
     try {
       return JSON.parse(text) as ParsedActionPayload
@@ -338,6 +344,7 @@ export class WriteExecutor {
     }
   }
 
+  /** 状态机扫描文本，找出第一段合法 JSON 对象。 */
   private findFirstJSONObject(text: string): string {
     let start = -1
     let depth = 0
@@ -381,6 +388,7 @@ export class WriteExecutor {
     throw new Error('无法提取JSON')
   }
 
+  /** 把模型返回的动作名归一化为项目约定的四类之一。 */
   private validateAction(action: string): 'chat' | 'schedule' | 'study' | 'psych' | 'unknown' {
     const normalized = action.trim().toLowerCase()
 
@@ -400,6 +408,7 @@ export class WriteExecutor {
     return 'unknown'
   }
 
+  /** 把模型返回的 reply 归一化为字符串，空值时按动作类型给兜底文案。 */
   private normalizeReply(reply: FlexibleValue, action: string): string {
     const text = this.normalizeString(reply)
     if (text.length > 0) {
@@ -420,6 +429,7 @@ export class WriteExecutor {
     }
   }
 
+  /** 把模型返回的 data 字段归一化为字符串。 */
   private normalizeData(data: FlexibleValue, parsed?: ParsedActionPayload): string {
     if (data === undefined || data === null) {
       if (parsed) {
@@ -474,6 +484,7 @@ export class WriteExecutor {
     }
   }
 
+  /** 把任意值归一化为字符串。 */
   private normalizeString(value: FlexibleValue): string {
     if (value === undefined || value === null) {
       return ''
@@ -491,6 +502,7 @@ export class WriteExecutor {
     }
   }
 
+  /** 截断超长文本。 */
   private truncate(text: string, maxLength: number): string {
     if (text.length <= maxLength) {
       return text
@@ -498,11 +510,13 @@ export class WriteExecutor {
     return `${text.substring(0, maxLength)}...`
   }
 
+  /** 从回复文本中尝试提取日程内容。 */
   private extractScheduleContentFromReply(reply: string): string {
     const match = reply.match(/(?:安排|添加|创建|提醒)(?:日程|提醒|会议)?[：:]?\s*(.+)$/)
     return match && match[1] ? match[1].trim() : ''
   }
 
+  /** 从回复文本中尝试提取学习主题。 */
   private extractStudyTopic(text: string): string {
     const topicPatterns: RegExp[] = [
       /(?:学习|学|复习|推荐)(.+?)(?:课程|资料|内容|$)/,
@@ -519,6 +533,7 @@ export class WriteExecutor {
     return ''
   }
 
+  /** 判断字符串是否为有意义的学习主题。 */
   private isMeaningfulStudyTopic(text: string): boolean {
     const normalized = this.normalizeString(text).trim()
     if (normalized.length === 0) {
@@ -533,6 +548,7 @@ export class WriteExecutor {
     return normalized.indexOf('":') < 0 && normalized.indexOf('","') < 0
   }
 
+  /** 清洗学习主题中的语气词和标点。 */
   private normalizeStudyTopic(topic: string): string {
     const text = this.normalizeString(topic)
       .replace(/我想/g, '')
@@ -547,11 +563,16 @@ export class WriteExecutor {
     return text.length > 0 ? text : '当前学习内容'
   }
 
+  /** 获取今天 0 点的 Date 对象。 */
   private startOfToday(): Date {
     const now = new Date()
     return new Date(now.getFullYear(), now.getMonth(), now.getDate())
   }
 
+  /**
+   * 从文本中提取日期。
+   * 支持：yyyy-MM-dd、M月D日、今天/明天/后天/大后天、下周X、周X。
+   */
   private extractDate(content: string): Date | null {
     const now = this.startOfToday()
 
@@ -597,6 +618,10 @@ export class WriteExecutor {
     return null
   }
 
+  /**
+   * 从文本中提取时间。
+   * 支持：HH:mm、下午三点、三点半、一刻、三刻等中文表达。
+   */
   private extractTime(content: string): number[] | null {
     const normalized = content.replace(/：/g, ':')
     const colonMatch = normalized.match(/(\d{1,2})\s*:\s*(\d{1,2})/)
@@ -639,6 +664,7 @@ export class WriteExecutor {
     return null
   }
 
+  /** 从文本中提取地点。 */
   private extractLocation(content: string): string | null {
     const patterns: RegExp[] = [
       /在([^，。；\n]+?)(?:开会|会议|上课|学习|面试|见面|吃饭|汇报|讨论|提醒|$)/,
@@ -661,6 +687,7 @@ export class WriteExecutor {
     return null
   }
 
+  /** 从文本中提取事件描述，清洗掉时间和地点相关词汇。 */
   private extractEvent(content: string, location: string | null): string {
     let event = content
 
@@ -703,6 +730,7 @@ export class WriteExecutor {
     return event.length > 0 ? event : ''
   }
 
+  /** 当无法提取有效事件时，根据关键词给兜底描述。 */
   private buildFallbackEvent(content: string, location: string | null): string {
     if (location !== null && location.length > 0) {
       return `前往${location}`
@@ -722,6 +750,7 @@ export class WriteExecutor {
     return '待办事项'
   }
 
+  /** 根据提取出的字段数量计算日程解析置信度。 */
   private calculateScheduleConfidence(event: string, rawContent: string, extractedTime: string | null, location: string | null): number {
     let confidence = 0.35
     if (event.length > 0 && event !== rawContent) {
@@ -736,6 +765,7 @@ export class WriteExecutor {
     return Math.min(1, Math.round(confidence * 100) / 100)
   }
 
+  /** 基于关键词匹配分析心理状态等级。 */
   private analyzePsychState(text: string): PsychState {
     const normalized = this.normalizeString(text)
     const highKeywords: string[] = ['崩溃', '绝望', '活不下去', '自杀', '自残']
@@ -771,12 +801,14 @@ export class WriteExecutor {
     return result
   }
 
+  /** 日期加减天数。 */
   private addDays(date: Date, days: number): Date {
     const result = new Date(date.getTime())
     result.setDate(result.getDate() + days)
     return result
   }
 
+  /** 根据目标星期几计算对应日期。 */
   private getWeekdayDate(targetWeekday: number, nextWeek: boolean): Date {
     const today = this.startOfToday()
     const currentWeekday = today.getDay()
@@ -797,6 +829,7 @@ export class WriteExecutor {
     return this.addDays(today, offset)
   }
 
+  /** 中文星期/数字转 0-6。 */
   private weekdayToNumber(text: string): number {
     switch (text) {
       case '日':
@@ -826,6 +859,7 @@ export class WriteExecutor {
     }
   }
 
+  /** 把中文数字文本解析为阿拉伯数字。 */
   private parseNumberText(text: string): number {
     const normalized = this.normalizeString(text)
     const parsed = Number(normalized)
@@ -847,6 +881,7 @@ export class WriteExecutor {
     return this.chineseDigitToNumber(normalized)
   }
 
+  /** 单个中文数字字符转阿拉伯数字。 */
   private chineseDigitToNumber(text: string): number {
     switch (text) {
       case '零':
@@ -876,6 +911,7 @@ export class WriteExecutor {
     }
   }
 
+  /** 根据时段描述修正小时数（如下午3点 -> 15点）。 */
   private adjustHourByPeriod(hour: number, period: string): number {
     if ((period === '下午' || period === '晚上' || period === '今晚') && hour < 12) {
       return hour + 12
@@ -889,24 +925,23 @@ export class WriteExecutor {
     return hour
   }
 
+  /** 校验小时和分钟是否在合法范围内。 */
   private isValidHourMinute(hour: number, minute: number): boolean {
     return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59
   }
 
+  /** 把 Date 格式化为 yyyy-MM-dd HH:mm。 */
   private formatDateTime(date: Date): string {
     return `${date.getFullYear()}-${this.pad2(date.getMonth() + 1)}-${this.pad2(date.getDate())} ${this.pad2(date.getHours())}:${this.pad2(date.getMinutes())}`
   }
 
+  /** 补零到两位。 */
   private pad2(value: number): string {
     return value < 10 ? `0${value}` : `${value}`
   }
 
+  /** 转义正则特殊字符。 */
   private escapeRegExp(text: string): string {
     return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   }
 }
-
-
-
-
-

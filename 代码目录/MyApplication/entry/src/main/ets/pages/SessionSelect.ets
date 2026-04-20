@@ -1,13 +1,13 @@
-﻿import common from '@ohos.app.ability.common'
+import common from '@ohos.app.ability.common'
 import { router } from '@kit.ArkUI'
 import { ConversationRecord, DatabaseManager, UserInfo } from '../database/DatabaseManager'
 
-@Entry
-@Component
 /**
  * 会话选择页。
  * 用户登录后先进入这里，再决定进入哪个普通会话或心理辅导会话。
  */
+@Entry
+@Component
 struct SessionSelect {
   @State private conversationList: ConversationRecord[] = []
   @State private currentUser: UserInfo | null = null
@@ -23,18 +23,22 @@ struct SessionSelect {
     await this.refreshSessionData()
   }
 
+  /** 页面重新可见时刷新数据，处理从子页面返回后的状态同步。 */
   onPageShow(): void {
     this.handlePageShow()
   }
 
+  /** 实际刷新逻辑，抽出来方便多处复用。 */
   private handlePageShow(): void {
     this.refreshSessionData()
   }
 
+  /** 离开页面时关闭数据库连接。 */
   async aboutToDisappear(): Promise<void> {
     await this.dbManager.closeDB()
   }
 
+  /** 拉取当前用户和会话列表，未登录时自动跳回登录页。 */
   private async refreshSessionData(): Promise<void> {
     this.isLoading = true
     const user = await this.dbManager.getCurrentUser()
@@ -49,10 +53,12 @@ struct SessionSelect {
     this.isLoading = false
   }
 
+  /** 从数据库加载当前用户的所有会话。 */
   private async loadConversations(): Promise<void> {
     this.conversationList = await this.dbManager.getConversations()
   }
 
+  /** 把时间戳格式化为 MM-DD HH:mm。 */
   private formatTime(timestamp: string): string {
     const date = new Date(timestamp)
     return date.toLocaleString('zh-CN', {
@@ -63,8 +69,11 @@ struct SessionSelect {
     })
   }
 
+  /**
+   * 创建新会话。
+   * 新会话先使用占位标题，后续会根据真实聊天内容自动重命名。
+   */
   private async createConversation(type: 'general' | 'psych'): Promise<void> {
-    // 新会话先使用占位标题，后续会根据真实聊天内容自动重命名。
     const title = type === 'psych'
       ? `心理辅导 ${this.conversationList.filter((item: ConversationRecord): boolean => item.type === 'psych').length + 1}`
       : `新对话 ${this.conversationList.filter((item: ConversationRecord): boolean => item.type === 'general').length + 1}`
@@ -78,8 +87,11 @@ struct SessionSelect {
     this.openConversation(conversation)
   }
 
+  /**
+   * 打开指定会话。
+   * 先记录“当前会话”，其他页面只根据这个标记加载对应数据。
+   */
   private async openConversation(conversation: ConversationRecord): Promise<void> {
-    // 先记录“当前会话”，其他页面只根据这个标记加载对应数据。
     await this.dbManager.setCurrentConversation(conversation.id)
     if (conversation.type === 'psych') {
       router.pushUrl({ url: 'pages/PsychChat' })
@@ -88,6 +100,7 @@ struct SessionSelect {
     router.pushUrl({ url: 'pages/Index' })
   }
 
+  /** 删除指定会话并刷新列表。 */
   private async deleteConversation(conversation: ConversationRecord): Promise<void> {
     const success: boolean = await this.dbManager.deleteConversation(conversation.id)
     if (!success) {
@@ -96,13 +109,14 @@ struct SessionSelect {
     await this.loadConversations()
   }
 
+  /** 退出登录并清理本地状态。 */
   private async handleLogout(): Promise<void> {
     await this.dbManager.logout()
     router.replaceUrl({ url: 'pages/Login' })
   }
 
-  @Builder
   /** 会话卡片同时承担摘要展示与进入/删除操作。 */
+  @Builder
   private ConversationCardBuilder(item: ConversationRecord): void {
     Row() {
       Column({ space: 6 }) {
@@ -278,7 +292,3 @@ struct SessionSelect {
     .backgroundColor('#F8FAFC')
   }
 }
-
-
-
-

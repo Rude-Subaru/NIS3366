@@ -1,4 +1,4 @@
-﻿import common from '@ohos.app.ability.common'
+import common from '@ohos.app.ability.common'
 import { router } from '@kit.ArkUI'
 import { LLMService } from '../utils/LLMService'
 import { ConversationRecord, DatabaseManager, MessageRecord, ScheduleRecord, UserInfo } from '../database/DatabaseManager'
@@ -7,6 +7,7 @@ import { WriteExecutor, ActionResult, ScheduleDetail } from '../executors/WriteE
 import { SecurityChecker } from '../security/SecurityChecker'
 import { ActionDialog } from '../components/ActionDialog'
 
+/** 页面内使用的消息结构体。 */
 class ChatMessage {
   id: number
   content: string
@@ -29,8 +30,6 @@ interface ScheduleFormState {
   location: string
 }
 
-@Entry
-@Component
 /**
  * 普通会话主页面。
  * 这里串起了整个 AI 秘书主流程：
@@ -39,6 +38,8 @@ interface ScheduleFormState {
  * 3. 将用户输入依次交给读执行体、LLM 服务、安全检查和写执行体处理。
  * 4. 按动作类型决定是直接回复、弹窗确认日程，还是跳转心理辅导页面。
  */
+@Entry
+@Component
 struct Index {
   // 页面状态：会随着用户操作和数据库读取实时刷新。
   @State private messageList: ChatMessage[] = []
@@ -115,15 +116,18 @@ struct Index {
     }
   }
 
+  /** 离开页面时关闭数据库连接。 */
   async aboutToDisappear(): Promise<void> {
     await this.dbManager.closeDB()
   }
 
+  /** 同时加载历史消息和日程列表。 */
   private async loadInitialData(): Promise<void> {
     await this.loadHistoryMessages()
     await this.loadSchedules()
   }
 
+  /** 从数据库加载当前会话的最近 50 条历史消息。 */
   private async loadHistoryMessages(): Promise<void> {
     const history: MessageRecord[] = await this.dbManager.getRecentMessages(50, this.currentConversationId)
     this.messageList = history.map((msg: MessageRecord): ChatMessage => {
@@ -131,15 +135,18 @@ struct Index {
     })
   }
 
+  /** 从数据库加载当前会话的所有日程。 */
   private async loadSchedules(): Promise<void> {
     this.scheduleList = await this.dbManager.getAllSchedules(this.currentConversationId)
   }
 
+  /** 把时间戳格式化为 HH:mm。 */
   private formatTime(timestamp: string): string {
     const date: Date = new Date(timestamp)
     return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   }
 
+  /** 把提醒时间格式化为 MM-DD HH:mm。 */
   private formatDateTime(timestamp?: string): string {
     if (timestamp === undefined || timestamp.length === 0) {
       return '未设置提醒时间'
@@ -173,6 +180,7 @@ struct Index {
     }
   }
 
+  /** 把提取出的日程字段拼接成结构化展示文本。 */
   private buildStructuredScheduleContent(detail: string, remindTime?: string | null, location?: string | null): string {
     const dateText: string = remindTime && remindTime.length >= 10 ? remindTime.substring(0, 10) : '未设置'
     const timeText: string = remindTime && remindTime.length >= 16 ? remindTime.substring(11, 16) : '未设置'
@@ -261,6 +269,7 @@ struct Index {
     ].join('\n')
   }
 
+  /** 获取今天的日期字符串，格式 yyyy-MM-dd。 */
   private getTodayDateString(): string {
     const now = new Date()
     const year = now.getFullYear()
@@ -269,10 +278,12 @@ struct Index {
     return `${year}-${month}-${day}`
   }
 
+  /** 默认提醒时间，用于新建日程时的初始值。 */
   private getDefaultTimeString(): string {
     return '09:00'
   }
 
+  /** 根据 Date 对象返回中文星期几。 */
   private getWeekdayLabel(date: Date): string {
     const weekdays: string[] = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
     return weekdays[date.getDay()]
@@ -316,6 +327,7 @@ struct Index {
     return options
   }
 
+  /** 根据当前编辑的日期，计算滚轮默认选中下标。 */
   private getDatePickerIndex(): number {
     const options: string[] = this.getDatePickerOptions()
     const targetDate = this.editScheduleDate.trim().length > 0 ? this.editScheduleDate.trim() : this.getTodayDateString()
@@ -327,6 +339,7 @@ struct Index {
     return 0
   }
 
+  /** 根据当前编辑的时间，计算滚轮默认选中下标。 */
   private getTimePickerIndex(): number {
     const options: string[] = this.getTimePickerOptions()
     const targetTime = this.editScheduleTime.trim().length > 0 ? this.editScheduleTime.trim() : this.getDefaultTimeString()
@@ -334,17 +347,25 @@ struct Index {
     return index >= 0 ? index : 0
   }
 
+  /** 从滚轮选项字符串中提取 yyyy-MM-dd 部分。 */
   private extractDateFromOption(option: string): string {
     return option.length >= 10 ? option.substring(0, 10) : this.getTodayDateString()
   }
+
+  /** 统计当前未完成的日程数量。 */
   private getPendingScheduleCount(): number {
     return this.scheduleList.filter((item: ScheduleRecord): boolean => !item.isDone).length
   }
 
+  /** 统计当前已完成的日程数量。 */
   private getCompletedScheduleCount(): number {
     return this.scheduleList.filter((item: ScheduleRecord): boolean => item.isDone).length
   }
 
+  /**
+   * 保存消息到数据库并刷新列表。
+   * 用户消息还会触发会话标题的自动更新。
+   */
   private async addMessage(content: string, isUser: boolean): Promise<void> {
     const record: MessageRecord = await this.dbManager.saveMessage(content, isUser, this.currentConversationId)
     const newMessage: ChatMessage = new ChatMessage(record.id, record.content, record.isUser, this.formatTime(record.timestamp))
@@ -358,6 +379,7 @@ struct Index {
     this.scrollToBottom()
   }
 
+  /** 添加一条不写入数据库的临时消息，用于系统提示。 */
   private async addTransientMessage(content: string, isUser: boolean): Promise<void> {
     const message: ChatMessage = new ChatMessage(
       this.messageList.length + 1,
@@ -369,12 +391,17 @@ struct Index {
     this.scrollToBottom()
   }
 
+  /** 滚动到底部，保证新消息可见。 */
   private scrollToBottom(): void {
     setTimeout((): void => {
       this.listScroller.scrollEdge(Edge.Bottom)
     }, 100)
   }
 
+  /**
+   * 发送消息主流程。
+   * 依次执行：buildPrompt -> callLLM -> checkContent -> parseAction -> handleActionResult。
+   */
   async sendMessage(): Promise<void> {
     const userInput: string = this.inputText.trim()
     if (userInput.length === 0 || this.isLoading || this.isInitializing) {
@@ -469,6 +496,7 @@ struct Index {
     }
   }
 
+  /** 弹窗确认后把日程持久化到数据库。 */
   private async onDialogConfirm(): Promise<void> {
     if (this.pendingSchedule !== null) {
       const savedSchedule: ScheduleRecord = await this.dbManager.saveSchedule(this.pendingSchedule.content, this.pendingSchedule.remindTime, this.currentConversationId)
@@ -480,6 +508,7 @@ struct Index {
     this.pendingSchedule = null
   }
 
+  /** 弹窗取消后清空待处理日程。 */
   private async onDialogCancel(): Promise<void> {
     this.showActionDialog = false
     this.pendingSchedule = null
@@ -496,6 +525,7 @@ struct Index {
     this.editScheduleLocation = form.location
   }
 
+  /** 退出编辑模式并清空表单。 */
   private cancelEditSchedule(): void {
     this.editingScheduleId = 0
     this.editScheduleDetail = ''
@@ -526,6 +556,7 @@ struct Index {
     await this.addMessage('已更新该日程详情。', false)
   }
 
+  /** 删除指定日程并刷新列表。 */
   private async deleteSchedule(scheduleId: number): Promise<void> {
     const success: boolean = await this.dbManager.deleteSchedule(scheduleId)
     if (!success) {
@@ -564,15 +595,18 @@ struct Index {
     await this.addMessage('已将该日程标记为完成。', false)
   }
 
+  /** 退出登录并清理本地状态。 */
   private async handleLogout(): Promise<void> {
     await this.dbManager.logout()
     router.replaceUrl({ url: 'pages/Login' })
   }
 
+  /** 跳转至会话选择页。 */
   private goToSessionSelect(): void {
     router.pushUrl({ url: 'pages/SessionSelect' })
   }
 
+  /** 顶部标题栏，展示会话标题、用户信息和安全提示。 */
   @Builder
   private HeaderBuilder(): void {
     Column({ space: 6 }) {
@@ -615,8 +649,8 @@ struct Index {
     .linearGradient({ direction: GradientDirection.Right, colors: [['#163B2E', 0], ['#2D6A4F', 0.55], ['#4A8F70', 1]] })
   }
 
-  @Builder
   /** 顶部统计区支持折叠，优先给聊天内容让出屏幕空间。 */
+  @Builder
   private OverviewBuilder(): void {
     Column({ space: 10 }) {
       Row() {
@@ -689,8 +723,8 @@ struct Index {
     .borderRadius(18)
   }
 
-  @Builder
   /** 日程面板同样支持折叠，避免上半区长期占用过多高度。 */
+  @Builder
   private SchedulePanelBuilder(): void {
     Column({ space: 10 }) {
       Row() {
@@ -885,8 +919,8 @@ struct Index {
     .borderRadius(18)
   }
 
-  @Builder
   /** 聊天区始终占据剩余空间，保证长对话时滚动区域足够大。 */
+  @Builder
   private ChatPanelBuilder(): void {
     Column() {
       Row() {
@@ -971,6 +1005,7 @@ struct Index {
     .width('100%')
   }
 
+  /** 通知 Tab：展示当前会话的日程统计。 */
   @Builder
   private NotifyTabBuilder(): void {
     Column({ space: 12 }) {
@@ -1000,6 +1035,7 @@ struct Index {
     .padding(18)
   }
 
+  /** 我的 Tab：展示用户信息和快捷操作。 */
   @Builder
   private MineTabBuilder(): void {
     Column({ space: 14 }) {
@@ -1040,6 +1076,7 @@ struct Index {
     .padding(18)
   }
 
+  /** 底部输入框和发送按钮。 */
   @Builder
   private InputBuilder(): void {
     Row({ space: 10 }) {
@@ -1066,6 +1103,7 @@ struct Index {
     .backgroundColor('#FFFFFF')
   }
 
+  /** 底部导航栏容器。 */
   @Builder
   private BottomNavBuilder(): void {
     Row() {
@@ -1078,6 +1116,7 @@ struct Index {
     .backgroundColor('#FFFFFF')
   }
 
+  /** 单个底部导航项。 */
   @Builder
   private BottomNavItemBuilder(tabKey: string, title: string): void {
     Column({ space: 4 }) {
@@ -1138,22 +1177,3 @@ struct Index {
     .backgroundColor('#F1F5F9')
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

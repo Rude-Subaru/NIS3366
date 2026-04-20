@@ -1,13 +1,13 @@
-﻿import common from '@ohos.app.ability.common'
+import common from '@ohos.app.ability.common'
 import { DatabaseManager } from '../database/DatabaseManager'
 import { router } from '@kit.ArkUI'
 
-@Entry
-@Component
 /**
  * 登录/注册页。
  * 这里只负责账号进入，不承载具体业务；登录成功后统一跳转到会话中心。
  */
+@Entry
+@Component
 struct Login {
   @State private username: string = ''
   @State private password: string = ''
@@ -30,6 +30,7 @@ struct Login {
     }
   }
 
+  /** 离开页面时关闭数据库连接。 */
   async aboutToDisappear(): Promise<void> {
     await this.dbManager.closeDB()
   }
@@ -98,6 +99,7 @@ struct Login {
     }
   }
 
+  /** 在登录和注册模式之间切换。 */
   private toggleMode(): void {
     this.isRegisterMode = !this.isRegisterMode
     this.errorMessage = ''
