@@ -16,7 +16,6 @@
 | **技术栈** | HarmonyOS ArkTS / ArkUI、relationalStore、@ohos.net.http |
 | **协作工具** | Git（GitHub 托管）、Markdown 接口文档 |
 | **总提交数** | 29 次 |
-| **有效编码日** | 约 14 天 |
 
 ---
 
@@ -27,15 +26,14 @@
 | Git 作者 | 邮箱 | 提交次数 | 代码行贡献（估算） | 核心职责 |
 |---------|------|---------|------------------|---------|
 | **Huang Zhiyuan** | hzy364sjtu@gmail.com | 17 次 | 前端 UI（Index/Login/ChatDetail/PsychChat/SessionSelect）、ActionDialog、项目结构重构、README、PPT、文档统筹 | **组长**：UI 重构与主逻辑中枢管控 |
-| **Haoyong Zheng** | 3371852131@qq.com | 5 次 | 主功能框架搭建、DatabaseManager 增强、UI 增补、测试文档、部署文档、设计文档 | **组员A**（兼文档负责人）：大模型调度策略、UI 实现、文档编写 |
+| **Haoyong Zheng** | 3371852131@qq.com | 6 次 | 主功能框架搭建、DatabaseManager 增强、UI 增补、测试文档、部署文档、设计文档，LLMService 模型配置微调 | **组员A**（兼文档负责人）：大模型调度策略、UI 实现、文档编写 |
 | **Yuan Yifan** | yuan-yifan@sjtu.edu.cn | 3 次 | WriteExecutor 核心逻辑、SecurityChecker、演示视频、PPT 图片优化 | **组员C**：Write 路由分发与正则解析引擎 |
 | **Xu Mingyu** | 973609470@qq.com | 3 次 | DatabaseManager 初始化、ReadExecutor 系统信息接入 | **组员B**：底层数据架构与 Read 感知层 |
-| **tyzhnh** | 3371852131@qq.com | 1 次 | LLMService 模型配置微调 | Haoyong Zheng 的别名账号，同一人 |
 
 **贡献可视化**：
 
 ```
-Huang Zhiyuan     ████████████████████████████████████  17 commits (58.6%)
+Huang Zhiyuan   ████████████████████████████████████  17 commits (58.6%)
 Haoyong Zheng   ████████████                          6 commits (20.7%)  [含 tyzhnh]
 Yuan Yifan      ██████                                3 commits (10.3%)
 Xu Mingyu       ██████                                3 commits (10.3%)
@@ -89,16 +87,7 @@ Xu Mingyu       ██████                                3 commits (10.
 
 ## 四、协作模式分析
 
-### 4.1 分支策略
-
-- **主分支**：`main`（单主干开发）
-- **合并记录**：共 2 次 Merge commit
-  - `faa0ffe`（04-19）：Merge branch 'main' — 解决同步冲突
-  - `a6c89fb`（04-20）：Merge branch 'main' — 同步远程更新
-- **策略特征**：小团队采用「主干直推 + 必要时 Merge」的轻量模式，未使用 Feature Branch，符合 4 人课程项目的协作复杂度。
-
-
-### 4.2 并行协作特征
+### 4.1 并行协作特征
 
 ```
 时间轴（4.15 – 4.18 高峰期）
